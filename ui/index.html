@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gemini Desktop</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ------------------------------------------------ заставка на время загрузки -->
+<div class="splash" id="splash">
+  <div class="splash-inner">
+    <svg class="splash-spark" viewBox="0 0 24 24" aria-hidden="true">
+      <defs>
+        <linearGradient id="splashGrad" x1="0" y1="1" x2="1" y2="0">
+          <stop class="s1" offset="0%"   stop-color="#34a853"/>
+          <stop class="s2" offset="35%"  stop-color="#fbbc05"/>
+          <stop class="s3" offset="70%"  stop-color="#ea4335"/>
+          <stop class="s4" offset="100%" stop-color="#4285f4"/>
+        </linearGradient>
+      </defs>
+      <path fill="url(#splashGrad)" d="M12 1.6c.7 5.4 4.4 9.1 9.8 9.8c.4.1.4.7 0 .8c-5.4.7-9.1 4.4-9.8 9.8c-.1.4-.7.4-.8 0c-.7-5.4-4.4-9.1-9.8-9.8c-.4-.1-.4-.7 0-.8c5.4-.7 9.1-4.4 9.8-9.8c.1-.4.7-.4.8 0z"/>
+    </svg>
+    <div class="splash-bar"><i></i></div>
+  </div>
+</div>
+
+<div class="app">
+
+  <!-- ------------------------------------------------ боковая панель -->
+  <aside class="sidebar" id="sidebar">
+    <div class="side-top">
+      <button class="icon-btn" id="btnCollapse" title="Свернуть панель">
+        <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+    </div>
+
+    <button class="new-chat" id="btnNewChat">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      <span>Новый чат</span>
+    </button>
+
+    <div class="search-box">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="chatSearch" type="text" placeholder="Поиск по чатам" spellcheck="false">
+    </div>
+
+    <div class="side-label" id="recentLabel">Недавние</div>
+    <div class="chat-list" id="chatList"></div>
+
+    <div class="side-bottom">
+      <button class="side-action" id="btnSettings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.27.63.88 1.04 1.51 1.04H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>Настройки</span>
+      </button>
+      <button class="side-action" id="btnDownloads">
+        <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        <span>Папка загрузок</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ------------------------------------------------ основная область -->
+  <main class="main">
+    <header class="topbar">
+      <button class="icon-btn only-collapsed" id="btnExpand" title="Показать панель">
+        <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+
+      <div class="model-picker" id="modelPicker">
+        <button class="model-btn" id="modelBtn">
+          <span id="modelName">agy</span>
+          <svg viewBox="0 0 24 24" class="chev"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div class="model-menu" id="modelMenu">
+          <div class="model-menu-head">
+            <span>Модель</span>
+            <button id="btnRefreshModels" class="mini-btn">Обновить</button>
+          </div>
+          <div class="model-menu-list" id="modelMenuList"></div>
+        </div>
+      </div>
+
+      <div class="level-picker" id="levelPicker" title="Глубина размышлений"></div>
+
+      <div class="spacer"></div>
+
+      <div class="tools-chip" id="toolsChip" title="Инструменты">
+        <svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 1-5 5L4 17v3h3l5.7-5.7a4 4 0 0 1 5-5l-2.5-2.5z"/></svg>
+        <span id="toolsChipText">Инструменты</span>
+      </div>
+
+      <button class="icon-btn" id="btnTheme" title="Тема">
+        <svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+    </header>
+
+    <div class="scroll" id="scroll">
+      <div class="thread" id="thread"></div>
+
+      <div class="welcome" id="welcome">
+        <h1><span class="grad">Здравствуйте</span></h1>
+        <p class="welcome-sub">Чем займёмся сегодня?</p>
+        <div class="cards">
+          <button class="card" data-prompt="Сохрани в текстовый файл список из 10 идей для выходных">
+            <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            <span>Сохрани список идей в txt-файл</span>
+          </button>
+          <button class="card" data-prompt="Объясни простыми словами, как работает HTTPS">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+            <span>Объясни, как работает HTTPS</span>
+          </button>
+          <button class="card" data-prompt="Напиши скрипт на PowerShell, который чистит папку загрузок от файлов старше 30 дней">
+            <svg viewBox="0 0 24 24"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
+            <span>Скрипт очистки загрузок</span>
+          </button>
+          <button class="card" data-prompt="Составь план изучения английского на месяц и сохрани его на рабочий стол">
+            <svg viewBox="0 0 24 24"><path d="M8 2v4M16 2v4M3 10h18"/><rect x="3" y="4" width="18" height="18" rx="2"/></svg>
+            <span>План на месяц — файлом на стол</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer-wrap">
+      <div class="composer">
+        <!-- Приложенные картинки: миниатюры над строкой ввода -->
+        <div class="attach-strip" id="attachStrip" hidden></div>
+        <input type="file" id="attachInput" accept="image/*" multiple hidden>
+        <textarea id="input" rows="1" placeholder="Спросите Gemini" spellcheck="false"></textarea>
+        <div class="composer-actions">
+          <button class="icon-btn" id="btnAttach" title="Приложить картинку">
+            <svg viewBox="0 0 24 24"><path d="M21 12.2l-8.5 8.5a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg>
+          </button>
+          <button class="icon-btn send" id="btnSend" title="Отправить">
+            <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+          <button class="icon-btn stop" id="btnStop" title="Остановить">
+            <svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="composer-hint">
+        Enter — отправить, Shift+Enter — новая строка. Файлы сохраняются в
+        <button class="link" id="hintDir">Загрузки</button>.
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ------------------------------------------------ настройки -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <header class="modal-head">
+      <h2>Настройки</h2>
+      <button class="icon-btn" id="btnCloseSettings">
+        <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </header>
+
+    <div class="modal-body">
+
+      <section class="block">
+        <div class="block-title">Подключение</div>
+        <div class="grid2">
+          <label class="field">
+            <span>Провайдер</span>
+            <select id="setProvider">
+              <option value="openai">OpenAI-совместимый шлюз</option>
+              <option value="google">Google Gemini API</option>
+            </select>
+          </label>
+          <label class="field" id="fieldBaseUrl">
+            <span>Base URL</span>
+            <input id="setBaseUrl" type="text" spellcheck="false" placeholder="http://127.0.0.1:8080/v1">
+          </label>
+        </div>
+        <label class="field">
+          <span>API-ключ</span>
+          <div class="with-btn">
+            <input id="setApiKey" type="password" spellcheck="false" autocomplete="off"
+                   placeholder="sk-...">
+            <button class="mini-btn" id="btnClearKey">Удалить</button>
+            <button class="mini-btn" id="btnTest">Проверить</button>
+          </div>
+          <em class="hint" id="keyHint"></em>
+          <em class="hint" id="testResult"></em>
+        </label>
+      </section>
+
+      <!-- два промта рядом: слева глобальный, справа инструменты -->
+      <section class="block">
+        <div class="block-title">Промты</div>
+        <div class="prompts">
+          <div class="prompt-col">
+            <div class="prompt-head">
+              <span>Глобальный промт</span>
+              <button class="mini-btn" data-reset="global">Сбросить</button>
+            </div>
+            <textarea id="setGlobalPrompt" spellcheck="false"></textarea>
+            <em class="hint">Общие правила: тон, язык, формат ответов.</em>
+          </div>
+          <div class="prompt-col">
+            <div class="prompt-head">
+              <span>Промт инструментов</span>
+              <button class="mini-btn" data-reset="tools">Сбросить</button>
+            </div>
+            <textarea id="setToolsPrompt" spellcheck="false"></textarea>
+            <em class="hint">Описание инструментов и правил их вызова.</em>
+          </div>
+        </div>
+        <label class="check">
+          <input type="checkbox" id="setToolsEnabled">
+          <span>Включить инструменты (создание txt-файлов)</span>
+        </label>
+      </section>
+
+      <section class="block">
+        <div class="block-title">Файлы</div>
+        <label class="field">
+          <span>Папка по умолчанию</span>
+          <div class="with-btn">
+            <input id="setDefaultDir" type="text" spellcheck="false" placeholder="Загрузки">
+            <button class="mini-btn" id="btnPickDir">Выбрать</button>
+            <button class="mini-btn" id="btnResetDir">Загрузки</button>
+          </div>
+          <em class="hint">Сюда попадают файлы, если модель не указала папку явно.</em>
+        </label>
+      </section>
+
+      <section class="block">
+        <div class="block-title">Инструменты, написанные моделью</div>
+        <div class="own-tools" id="ownTools"><em class="hint">Загружаю…</em></div>
+      </section>
+
+      <section class="block">
+        <div class="block-title">Расход</div>
+        <div class="usage" id="usageBox">
+          <em class="hint">Загружаю…</em>
+        </div>
+      </section>
+
+      <section class="block">
+        <div class="block-title">Запуск</div>
+        <label class="check">
+          <input type="checkbox" id="setAutostart">
+          <span>Запускать вместе с Windows — свёрнутым в трей</span>
+        </label>
+        <em class="hint" id="autostartHint"></em>
+        <em class="hint">Горячие клавиши: Ctrl+N — новый чат, Ctrl+F — поиск,
+          Ctrl+, — настройки, Esc — закрыть окно поверх.</em>
+      </section>
+
+      <section class="block danger">
+        <div class="block-title">Данные</div>
+        <div class="row-between">
+          <em class="hint" id="dataDirHint"></em>
+          <button class="mini-btn warn" id="btnClearAll">Удалить все чаты</button>
+        </div>
+      </section>
+
+      <section class="block">
+        <div class="block-title">О программе</div>
+        <div class="row-between">
+          <em class="hint" id="verHint">Gemini Desktop</em>
+          <button class="mini-btn" id="btnCheckUpd">Проверить обновление</button>
+        </div>
+      </section>
+    </div>
+
+    <footer class="modal-foot">
+      <em class="hint" id="saveHint"></em>
+      <button class="primary" id="btnSaveSettings">Сохранить</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ------------------------------------------------ свой диалог вместо prompt/confirm -->
+<div class="overlay dialog-overlay" id="dialogOverlay">
+  <div class="dialog" id="dialog" role="dialog" aria-modal="true">
+    <h3 class="dialog-title" id="dialogTitle"></h3>
+    <p class="dialog-text" id="dialogText"></p>
+    <input class="dialog-input" id="dialogInput" type="text" spellcheck="false" autocomplete="off">
+    <div class="dialog-actions">
+      <button class="mini-btn" id="dialogCancel">Отмена</button>
+      <button class="primary" id="dialogOk">ОК</button>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------ первый запуск -->
+<div class="wizard" id="wizard">
+  <div class="wiz-card">
+    <div class="wiz-body">
+
+      <section class="wiz-page shown" data-page="1">
+        <svg class="wiz-spark" viewBox="0 0 24 24" aria-hidden="true">
+          <defs>
+            <linearGradient id="wizGrad" x1="0" y1="1" x2="1" y2="0">
+              <stop offset="0%" stop-color="#34a853"/>
+              <stop offset="35%" stop-color="#fbbc05"/>
+              <stop offset="70%" stop-color="#ea4335"/>
+              <stop offset="100%" stop-color="#4285f4"/>
+            </linearGradient>
+          </defs>
+          <path fill="url(#wizGrad)" d="M12 1.6c.7 5.4 4.4 9.1 9.8 9.8c.4.1.4.7 0 .8c-5.4.7-9.1 4.4-9.8 9.8c-.1.4-.7.4-.8 0c-.7-5.4-4.4-9.1-9.8-9.8c-.4-.1-.4-.7 0-.8c5.4-.7 9.1-4.4 9.8-9.8c.1-.4.7-.4.8 0z"/>
+        </svg>
+        <h1>Gemini на вашем компьютере</h1>
+        <p class="wiz-sub">Обычный чат, но живёт рядом с файлами и умеет с ними работать.</p>
+        <ul class="wiz-list">
+          <li>
+            <b>Чаты и модели</b>
+            <span>Семь моделей и отдельный выбор глубины размышлений. У каждого чата своя.</span>
+          </li>
+          <li>
+            <b>Работа с файлами</b>
+            <span>Создаёт txt, md и csv, читает текстовые файлы, открывает папки.</span>
+          </li>
+          <li>
+            <b>Свои инструменты</b>
+            <span>Если готовых не хватает, модель пишет новый — а запускается он только с вашего разрешения.</span>
+          </li>
+          <li>
+            <b>Два промта</b>
+            <span>Общие правила ответа и отдельно описание инструментов — оба можно переписать.</span>
+          </li>
+        </ul>
+      </section>
+
+      <section class="wiz-page" data-page="2">
+        <h1>Начало</h1>
+        <p class="wiz-sub">Приложение ходит к модели через шлюз. Укажите адрес и ключ — и можно работать.</p>
+
+        <label class="wiz-field">
+          <span>Провайдер</span>
+          <select id="wizProvider">
+            <option value="openai">OpenAI-совместимый шлюз</option>
+            <option value="google">Google Gemini API</option>
+          </select>
+        </label>
+
+        <label class="wiz-field" id="wizBaseWrap">
+          <span>Адрес шлюза</span>
+          <input id="wizBase" type="text" spellcheck="false" placeholder="http://127.0.0.1:8080/v1">
+          <em class="wiz-hint">Подставлен шлюз на этом компьютере. Если ваш живёт по другому адресу — замените.</em>
+        </label>
+
+        <label class="wiz-field">
+          <span>API-ключ</span>
+          <input id="wizKey" type="password" spellcheck="false" autocomplete="off" placeholder="sk-...">
+          <em class="wiz-hint" id="wizKeyHint">Хранится только на этом компьютере и нигде не показывается. Свой шлюз может ключа и не спрашивать — тогда оставьте поле пустым.</em>
+        </label>
+      </section>
+
+      <section class="wiz-page" data-page="3">
+        <div class="wiz-done">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg>
+        </div>
+        <h1>Всё готово</h1>
+        <p class="wiz-sub" id="wizReady">Шлюз ответил, ключ принят.</p>
+        <p class="wiz-note">Нажмите «Начать» — откроется первый чат, и Gemini сам расскажет,
+          что умеет в этом приложении.</p>
+      </section>
+
+    </div>
+
+    <footer class="wiz-foot">
+      <div class="wiz-dots"><i class="on"></i><i></i><i></i></div>
+      <em class="wiz-err" id="wizErr"></em>
+      <button class="mini-btn" id="wizBack">Назад</button>
+      <button class="primary" id="wizNext">Дальше</button>
+    </footer>
+  </div>
+</div>
+
+
+<!-- ------------------------------------------------ обновление -->
+<div class="wizard" id="updBox">
+  <div class="wiz-card upd-card">
+    <div class="wiz-body">
+      <section class="wiz-page shown">
+        <h1>Есть обновление</h1>
+        <div class="upd-ver">
+          <span class="from" id="updFrom"></span>
+          <span class="arrow">&rarr;</span>
+          <span class="to" id="updTo"></span>
+        </div>
+        <div class="upd-imp" id="updImp" hidden>важное обновление</div>
+        <div class="upd-notes" id="updNotes"></div>
+        <div class="upd-bar" id="updBar" hidden><i></i></div>
+      </section>
+    </div>
+    <footer class="wiz-foot">
+      <em class="wiz-err" id="updErr"></em>
+      <button class="mini-btn" id="updLater">Позже</button>
+      <button class="primary" id="updGo">Обновить</button>
+    </footer>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- F11 убирает рамку окна. Панель с названием и кнопками выезжает, когда
+     курсор подходит к самой верхней кромке: иначе в полноэкранном режиме
+     свернуть или закрыть окно нечем. -->
+<div class="winbar" id="winbar">
+  <span class="winbar-title">Gemini</span>
+  <div class="spacer"></div>
+  <button class="winbar-btn" id="fsMin" title="Свернуть">
+    <svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
+  </button>
+  <button class="winbar-btn" id="fsExit" title="Выйти из полноэкранного режима (F11)">
+    <svg viewBox="0 0 24 24"><path d="M9 3v6H3M15 21v-6h6M21 9h-6V3M3 15h6v6"/></svg>
+  </button>
+  <button class="winbar-btn close" id="fsClose" title="Свернуть в значок">
+    <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+  </button>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

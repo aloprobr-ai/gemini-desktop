@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Установщик Gemini Desktop.
+
+  Python внутрь exe уже упакован, отдельно его ставить не нужно. А вот
+  WebView2 — настоящая зависимость: без него окно приложения просто не
+  откроется, поэтому его наличие проверяем до установки.
+
+  Два необязательных пункта вынесены в дерево компонентов, чтобы человек
+  сам решил: ярлык на рабочем столе и запуск вместе с Windows.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package Name="Gemini Desktop"
+           Manufacturer="aloprobr-ai"
+           Version="$(var.AppVersion)"
+           UpgradeCode="6f2a1d54-8b3e-4c17-9a42-0d5e7c1b9f30"
+           Scope="perMachine"
+           Compressed="yes"
+           Language="1049"
+           Codepage="1251">
+
+    <SummaryInformation Description="Gemini Desktop — клиент Gemini для Windows"
+                        Manufacturer="aloprobr-ai" />
+
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="Уже установлена более новая версия Gemini Desktop." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- ==================================== закрываем приложение сами
+
+         Иначе установщик упрётся в занятые файлы и попросит человека закрыть
+         программу руками. Тонкостей здесь две.
+
+         Первая: вежливое «закройся» не годится — крестик у окна прячет
+         приложение в значок, процесс живёт дальше и файлы держит. Нужен снос
+         процесса; переписка сохраняется сразу после каждого сообщения,
+         так что терять нечего.
+
+         Вторая: готовое util:CloseApplication делает работу отложенным
+         действием, а его нельзя поставить раньше InstallInitialize — Windows
+         же смотрит занятые файлы раньше и успевает показать своё окно. Поэтому
+         обычное немедленное действие: оно выполняется от имени того, кто ставит,
+         и как раз до проверки.                                             -->
+    <CustomAction Id="CloseGeminiDesktop"
+                  Directory="System64Folder"
+                  ExeCommand="[System64Folder]taskkill.exe /F /IM &quot;Gemini Desktop.exe&quot;"
+                  Execute="immediate"
+                  Impersonate="yes"
+                  Return="ignore" />
+
+    <Icon Id="AppIcon" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/aloprobr-ai/gemini-desktop" />
+
+    <!-- ======================================== проверка WebView2 -->
+    <Property Id="WV2MACHINE">
+      <RegistrySearch Id="Wv2Machine" Root="HKLM" Bitness="always32"
+                      Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+                      Name="pv" Type="raw" />
+    </Property>
+    <Property Id="WV2USER">
+      <RegistrySearch Id="Wv2User" Root="HKCU"
+                      Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+                      Name="pv" Type="raw" />
+    </Property>
+
+    <!-- ==================================== что было выбрано в прошлый раз
+
+         Обновление не должно переспрашивать про соглашение и про галочки:
+         человек их уже ставил. Прошлый выбор читаем из реестра до установки
+         (AppSearch идёт в самом начале, старые значения ещё на месте) и им же
+         задаём состояние необязательных пунктов.                          -->
+    <Property Id="PREV_DESKTOP">
+      <RegistrySearch Id="PrevDesktop" Root="HKCU"
+                      Key="Software\GeminiDesktop"
+                      Name="desktopShortcut" Type="raw" />
+    </Property>
+    <!-- До 1.2.0 отметка лежала в другом месте. Смотрим и туда: иначе при
+         обновлении с прежних версий ярлык с рабочего стола молча пропадёт —
+         установщик решит, что его и не просили. Когда таких версий ни у кого
+         не останется, эту проверку можно убрать. -->
+    <Property Id="PREV_DESKTOP_OLD">
+      <RegistrySearch Id="PrevDesktopOld" Root="HKCU"
+                      Key="Software\legacy\GeminiDesktop"
+                      Name="desktopShortcut" Type="raw" />
+    </Property>
+    <Property Id="PREV_AUTOSTART">
+      <RegistrySearch Id="PrevAutostart" Root="HKCU"
+                      Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                      Name="GeminiDesktop" Type="raw" />
+    </Property>
+
+    <Launch Condition="Installed OR WV2MACHINE OR WV2USER"
+            Message="Нужен компонент Microsoft Edge WebView2 — без него окно приложения не откроется. Установите его с https://go.microsoft.com/fwlink/p/?LinkId=2124703 и запустите установку снова." />
+
+    <!-- ======================================== куда ставим -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Gemini Desktop" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+    <StandardDirectory Id="System64Folder" />
+
+    <!-- ======================================== что ставим -->
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Component Id="MainExe" Guid="8c41b7a2-5de6-4f39-b0c8-2a7f61d4e5b1">
+        <File Id="GeminiExe" Name="Gemini Desktop.exe" Source="$(var.ExeFile)" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder"
+                    Name="Gemini Desktop" Icon="AppIcon" Advertise="yes" />
+        </File>
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="DesktopShortcutGroup" Directory="DesktopFolder">
+      <Component Id="DesktopShortcutComp" Guid="7d2e51a9-38fc-4b60-9c14-6ae0f3b28d55">
+        <Shortcut Id="DesktopShortcut" Name="Gemini Desktop"
+                  Target="[INSTALLFOLDER]Gemini Desktop.exe"
+                  WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" />
+        <RemoveFolder Id="RemoveDesktopShortcut" On="uninstall" />
+        <!-- отметка в реестре: у ярлыка на рабочем столе нет своего пути в HKCU -->
+        <RegistryValue Root="HKCU" Key="Software\GeminiDesktop"
+                       Name="desktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="AutostartGroup" Directory="INSTALLFOLDER">
+      <Component Id="AutostartComp" Guid="4e7c82f1-30ab-4d95-a6b7-5f2e8c19d073">
+        <!-- Тот же ключ, которым управляет галочка в настройках приложения,
+             и тот же ключ запуска: приложение поднимается молча, значком в трее. -->
+        <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                       Name="GeminiDesktop" Type="string"
+                       Value="&quot;[INSTALLFOLDER]Gemini Desktop.exe&quot; --tray" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- ======================================== что можно выбрать -->
+    <Feature Id="Main" Title="Приложение" Level="1" AllowAbsent="no"
+             Description="Gemini Desktop и ярлык в меню «Пуск».">
+      <ComponentGroupRef Id="AppFiles" />
+    </Feature>
+
+    <Feature Id="DesktopIcon" Title="Ярлык на рабочем столе" Level="1"
+             Description="Положить ярлык на рабочий стол.">
+      <!-- При обновлении ярлыка не было — не возвращаем его самовольно. -->
+      <Level Value="1000" Condition="WIX_UPGRADE_DETECTED AND NOT PREV_DESKTOP AND NOT PREV_DESKTOP_OLD" />
+      <ComponentGroupRef Id="DesktopShortcutGroup" />
+    </Feature>
+
+    <Feature Id="Autostart" Title="Запускать вместе с Windows" Level="1000"
+             Description="Приложение будет стартовать при входе в систему и ждать в трее. По умолчанию выключено.">
+      <!-- Запись в Run ставит и установщик, и галочка в настройках приложения.
+           Есть она — значит автозапуск нужен, и после обновления он остаётся. -->
+      <Level Value="1" Condition="PREV_AUTOSTART" />
+      <ComponentGroupRef Id="AutostartGroup" />
+    </Feature>
+
+    <InstallExecuteSequence>
+      <Custom Action="CloseGeminiDesktop" Before="InstallValidate" />
+    </InstallExecuteSequence>
+
+    <!-- ======================================== окна установщика -->
+    <ui:WixUI Id="WixUI_FeatureTree" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseFile)" />
+
+    <!-- Обновление проходит мимо соглашения и дерева компонентов: с приветствия
+         сразу к подтверждению. Порядок больше, чем у встроенных переходов, —
+         окно выбирает тот переход, который сработал последним. -->
+    <UI>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg"
+               Order="99" Condition="WIX_UPGRADE_DETECTED" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg"
+               Order="99" Condition="WIX_UPGRADE_DETECTED" />
+    </UI>
+  </Package>
+</Wix>

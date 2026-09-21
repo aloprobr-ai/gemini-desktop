@@ -1,0 +1,21 @@
+# Сборка
+/build/
+/dist/
+/.venv/
+/.wix/
+__pycache__/
+*.pyc
+
+# Локальное
+*.log
+*.bak
+*.bak-*
+*~
+
+# Мусор операционных систем и редакторов
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp

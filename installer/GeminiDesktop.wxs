@@ -78,15 +78,6 @@
                       Key="Software\GeminiDesktop"
                       Name="desktopShortcut" Type="raw" />
     </Property>
-    <!-- До 1.2.0 отметка лежала в другом месте. Смотрим и туда: иначе при
-         обновлении с прежних версий ярлык с рабочего стола молча пропадёт —
-         установщик решит, что его и не просили. Когда таких версий ни у кого
-         не останется, эту проверку можно убрать. -->
-    <Property Id="PREV_DESKTOP_OLD">
-      <RegistrySearch Id="PrevDesktopOld" Root="HKCU"
-                      Key="Software\legacy\GeminiDesktop"
-                      Name="desktopShortcut" Type="raw" />
-    </Property>
     <Property Id="PREV_AUTOSTART">
       <RegistrySearch Id="PrevAutostart" Root="HKCU"
                       Key="Software\Microsoft\Windows\CurrentVersion\Run"
@@ -145,7 +136,7 @@
     <Feature Id="DesktopIcon" Title="Ярлык на рабочем столе" Level="1"
              Description="Положить ярлык на рабочий стол.">
       <!-- При обновлении ярлыка не было — не возвращаем его самовольно. -->
-      <Level Value="1000" Condition="WIX_UPGRADE_DETECTED AND NOT PREV_DESKTOP AND NOT PREV_DESKTOP_OLD" />
+      <Level Value="1000" Condition="WIX_UPGRADE_DETECTED AND NOT PREV_DESKTOP" />
       <ComponentGroupRef Id="DesktopShortcutGroup" />
     </Feature>
 

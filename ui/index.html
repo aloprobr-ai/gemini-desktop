@@ -218,6 +218,29 @@
         </label>
       </section>
 
+      <!-- /human обещает живой текст, а проверка смотрит, вышло ли -->
+      <section class="block">
+        <div class="block-title">Проверка текста после /human</div>
+        <label class="check">
+          <input type="checkbox" id="setHumanCheck">
+          <span>Проверять переписанный текст детектором</span>
+        </label>
+        <div class="grid2">
+          <label class="field">
+            <span>Сколько раз спросить</span>
+            <input id="setHumanRuns" type="number" min="1" max="5" step="1">
+          </label>
+          <label class="field">
+            <span>Кого спрашивать</span>
+            <input id="setDetectModel" type="text" spellcheck="false">
+          </label>
+        </div>
+        <em class="hint">Считается дважды: признаки — на этом компьютере, без сети,
+          а мнение спрашивается у модели. Один заход показывает одно настроение,
+          несколько — ещё и разброс: по нему видно, верить ли числу. Совпадать
+          два счёта не обязаны, и расхождение как раз полезно.</em>
+      </section>
+
       <section class="block">
         <div class="block-title">Файлы</div>
         <label class="field">
@@ -263,6 +286,28 @@
       </section>
 
       <section class="block">
+        <div class="block-title">Обратная связь</div>
+        <div class="row-between">
+          <em class="hint">Что-то сломалось или ведёт себя странно — расскажите.
+            Отчёт открывается в браузере, отправляете его вы сами, своей учётной
+            записью GitHub. Токена в программе нет и не будет: исходник открыт,
+            и любой зашитый ключ из него достанут.</em>
+          <button class="mini-btn" id="btnReportSettings">Сообщить о баге</button>
+        </div>
+      </section>
+
+      <section class="block">
+        <div class="block-title">Кто помог проекту</div>
+        <div class="row-between">
+          <em class="hint">Программу писал не только я. Люди присылали отчёты,
+            ловили ошибки, спорили о формулировках и проверяли сборки на своих
+            машинах. Все они перечислены в Helpers.md — файл лежит в корне
+            репозитория и открыт всем.</em>
+          <button class="mini-btn" id="btnHelpers">Открыть Helpers.md</button>
+        </div>
+      </section>
+
+      <section class="block">
         <div class="block-title">О программе</div>
         <div class="row-between">
           <em class="hint" id="verHint">Gemini Desktop</em>
@@ -279,6 +324,77 @@
 </div>
 
 <!-- ------------------------------------------------ свой диалог вместо prompt/confirm -->
+<!-- Отчёт об ошибке. Уходит не из программы, а из браузера: отправляет сам
+     человек своей учётной записью. Своего сервера тут нет намеренно —
+     посредник пришлось бы держать и защищать, а зашитый в открытый исходник
+     токен равен публичному. -->
+<div class="overlay" id="reportOverlay">
+  <div class="modal narrow">
+    <header class="modal-head">
+      <h2>Сообщить о баге</h2>
+      <button class="icon-btn" id="btnCloseReport">
+        <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </header>
+
+    <div class="modal-body">
+      <label class="field">
+        <span>Что случилось</span>
+        <textarea id="repWhat" rows="3" spellcheck="false"
+                  placeholder="Нажал «Перегенерировать» — окно побелело и ответа нет"></textarea>
+      </label>
+      <label class="field">
+        <span>Как повторить <em class="opt">если знаете</em></span>
+        <textarea id="repSteps" rows="3" spellcheck="false"
+                  placeholder="1. Открыть старый чат&#10;2. Нажать «Перегенерировать»"></textarea>
+      </label>
+
+      <div class="block-title">Что приложить</div>
+      <label class="check">
+        <input type="checkbox" id="repSystem" checked>
+        <span>Версию, Windows, имя шлюза и модель</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="repLog" checked>
+        <span>Последние строки журнала запуска</span>
+      </label>
+      <label class="check" id="repAnswerWrap" hidden>
+        <input type="checkbox" id="repAnswer">
+        <span>Ответ модели, на котором всё пошло не так</span>
+      </label>
+      <em class="hint">Ключи не приложатся ни при каком раскладе: всё, что уходит
+        наружу, сначала чистится. Переписка не прикладывается тоже — кроме
+        одного ответа, и только если отметить это выше.</em>
+
+      <div class="block-title">Куда</div>
+      <label class="radio">
+        <input type="radio" name="repWhere" value="public" checked>
+        <span><b>Открыто</b> — задача в репозитории. Видна всем, и так удобнее:
+          на неё можно сослаться, а другие увидят, что это уже известно.</span>
+      </label>
+      <label class="radio">
+        <input type="radio" name="repWhere" value="private">
+        <span><b>Закрыто</b> — форма приватного сообщения GitHub. Написать может
+          кто угодно, прочитать — только те, у кого есть права на репозиторий.
+          Сюда, если в отчёте личное: путь с вашим именем, адрес своего шлюза,
+          кусок переписки.</span>
+      </label>
+
+      <div class="row-between">
+        <em class="hint" id="repHint"></em>
+        <button class="mini-btn" id="btnRepPreview">Показать, что уйдёт</button>
+      </div>
+      <pre class="rep-preview" id="repPreview" hidden></pre>
+    </div>
+
+    <footer class="modal-foot">
+      <em class="hint" id="repErr"></em>
+      <button class="mini-btn" id="btnRepCopy">Скопировать</button>
+      <button class="primary" id="btnRepSend">Открыть GitHub</button>
+    </footer>
+  </div>
+</div>
+
 <div class="overlay dialog-overlay" id="dialogOverlay">
   <div class="dialog" id="dialog" role="dialog" aria-modal="true">
     <h3 class="dialog-title" id="dialogTitle"></h3>

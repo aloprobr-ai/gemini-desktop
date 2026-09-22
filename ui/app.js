@@ -13,6 +13,7 @@ const S = {
   fallbackModels: [],
   downloads: "",
   dataDir: "",
+  links: {},       // адреса на GitHub: помощники, репозиторий
   chat: null,
   busy: false,
   buf: "",
@@ -238,6 +239,9 @@ const ICONS = {
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   wrench: '<path d="M14.7 6.3a4 4 0 0 1-5 5L4 17v3h3l5.7-5.7a4 4 0 0 1 5-5l-2.5-2.5z"/>',
   pin: '<path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z"/><path d="M12 14v7"/>',
+  bug: '<path d="M9 6a3 3 0 0 1 6 0"/><rect x="7" y="8" width="10" height="12" rx="5"/>' +
+       '<path d="M3 11h4M17 11h4M3 17h4M17 17h4M12 8v12"/>',
+  check: '<path d="M20 6L9 17l-5-5"/>',
 };
 
 const scrollEl = () => $("scroll");
@@ -398,9 +402,11 @@ function messageNode(msg) {
       '<div class="tools"></div>' +
       '<div class="md"></div>' +
       '<div class="err-box" hidden></div>' +
+      '<div class="check-box" hidden></div>' +
       '<div class="msg-actions">' +
         '<button data-act="copy" title="Копировать">' + icon(ICONS.copy) + "</button>" +
         '<button data-act="regen" title="Перегенерировать">' + icon(ICONS.refresh) + "</button>" +
+        '<button data-act="bug" title="Сообщить о баге">' + icon(ICONS.bug) + "</button>" +
       "</div>" +
     "</div>";
 
@@ -418,11 +424,102 @@ function messageNode(msg) {
     box.textContent = msg.error;
   }
 
+  if (msg.check) showCheck(body.querySelector(".check-box"), msg.check);
+
   body.querySelector('[data-act="copy"]').addEventListener("click", () => {
     navigator.clipboard.writeText(msg.text || "").then(() => toast("Скопировано"));
   });
   body.querySelector('[data-act="regen"]').addEventListener("click", regenerate);
+  body.querySelector('[data-act="bug"]').addEventListener("click", () => {
+    openReport({ answer: msg.text || "", model: msg.model || "" });
+  });
   return el;
+}
+
+/* ------------------------------------------- проверка текста после /human */
+
+/* Два счёта рядом и намеренно не сведены в один: признаки считаются здесь
+   же, без сети, а мнение спрашивается у модели. Считают они разное, и когда
+   расходятся — это и есть самое полезное, что тут видно. */
+function showCheck(box, check) {
+  if (!box || !check) return;
+  box.hidden = false;
+  box.innerHTML = "";
+
+  if (check.pending) {
+    box.className = "check-box pending";
+    const n = check.runs || 3;
+    box.textContent = "Проверяю текст детектором, заходов: " + n + "…";
+    return;
+  }
+
+  const pct = (p) => Math.round((p || 0) * 100) + "%";
+  const j = check.judge;
+  const f = check.features;
+  const lead = j || f;
+  box.className = "check-box" + (lead ? " " + checkTone(lead.prob) : "");
+
+  const head = document.createElement("div");
+  head.className = "check-head";
+  head.innerHTML = icon(ICONS.check) + "<b></b><span></span>";
+  head.querySelector("b").textContent = lead
+    ? lead.verdict + " · " + pct(lead.prob) + " за ИИ"
+    : "Проверить не вышло";
+  head.querySelector("span").textContent = j
+    ? "по мнению модели, " + j.runs + " " + plural(j.runs, "заход", "захода", "заходов")
+    : "по признакам";
+  box.appendChild(head);
+
+  const rows = [];
+  if (j && f) {
+    rows.push("Признаки — " + pct(f.prob) + " (" + f.verdict + "), модель — " +
+              pct(j.prob) + " (" + j.verdict + ").");
+  }
+  if (j && j.runs > 1) {
+    rows.push("Разброс между заходами " + pct(j.spread) +
+              (j.spread >= 0.2 ? " — широковато, среднему тут веры мало." : "."));
+  }
+  if (j && j.failed) rows.push("Не ответили: " + j.failed + ".");
+  if (check.disagree) rows.push("Признаки и модель разошлись — читайте текст сами.");
+  if (check.short) rows.push("Текст короткий: на такой длине числам верить нельзя.");
+  if (check.judgeError) rows.push("Модель не ответила: " + check.judgeError);
+  if (j && j.summary) rows.push(j.summary);
+
+  rows.forEach((text) => {
+    const p = document.createElement("div");
+    p.className = "check-line";
+    p.textContent = text;
+    box.appendChild(p);
+  });
+
+  (j && j.observations || []).forEach((ob) => {
+    const line = document.createElement("div");
+    line.className = "check-obs " +
+      (String(ob.points_to || "").startsWith("и") ? "to-ai" : "to-human");
+    line.textContent = "«" + String(ob.quote || "").slice(0, 70) + "» — " +
+      String(ob.means || "").slice(0, 80);
+    box.appendChild(line);
+  });
+}
+
+/* Куда рисовать проверку: в последний ответ модели на экране. */
+function lastModelBox() {
+  const nodes = $("thread").querySelectorAll(".msg.model .check-box");
+  return nodes.length ? nodes[nodes.length - 1] : null;
+}
+
+function checkTone(prob) {
+  if (prob >= 0.6) return "bad";
+  if (prob > 0.4) return "mid";
+  return "good";
+}
+
+function plural(n, one, few, many) {
+  const a = Math.abs(n) % 100;
+  const b = a % 10;
+  if (a > 10 && a < 20) return many;
+  if (b > 1 && b < 5) return few;
+  return b === 1 ? one : many;
 }
 
 /* Модель написала инструмент. Запускать его до того, как человек увидел код,
@@ -908,6 +1005,23 @@ window.__ev = function (payload) {
       if (S.chat && S.chat.id === ev.chatId) S.compactedAt = ev.at;
       break;
 
+    /* Проверка приходит уже после «done»: она ходит в сеть ещё несколько раз,
+       и ответ всё это время висел бы недописанным. Поэтому рисуем её в том
+       сообщении, которое к этому моменту уже на месте. */
+    case "check_start":
+      showCheck(lastModelBox(), { pending: true, runs: ev.runs });
+      break;
+
+    case "check_done": {
+      showCheck(lastModelBox(), ev.check);
+      const msgs = (S.chat && S.chat.messages) || [];
+      for (let k = msgs.length - 1; k >= 0; k--) {
+        if (msgs[k].role === "model") { msgs[k].check = ev.check; break; }
+      }
+      toBottom(false);
+      break;
+    }
+
     case "done": {
       S.busy = false;
       document.body.classList.remove("busy");
@@ -1110,6 +1224,12 @@ function fillSettings() {
   $("setToolsEnabled").checked = !!s.toolsEnabled;
   $("setDefaultDir").value = s.defaultDir || "";
   $("setDefaultDir").placeholder = S.downloads;
+  $("setHumanCheck").checked = s.humanCheck !== false;
+  $("setHumanRuns").value = s.humanCheckRuns || 3;
+  $("setDetectModel").value = s.detectModel || "";
+  $("setDetectModel").placeholder = s.provider === "google"
+    ? "пусто — модель текущего чата"
+    : "пусто — gemini-3.1-pro-high";
   $("dataDirHint").textContent = "Чаты и настройки: " + S.dataDir;
   $("verHint").textContent = "Gemini Desktop " + (S.version || "");
   $("fieldBaseUrl").style.display = (s.provider === "google") ? "none" : "";
@@ -1259,6 +1379,11 @@ async function saveSettings() {
     toolsPrompt: $("setToolsPrompt").value,
     toolsEnabled: $("setToolsEnabled").checked,
     defaultDir: $("setDefaultDir").value.trim(),
+    humanCheck: $("setHumanCheck").checked,
+    // 1..5: больше пяти заходов стоят денег и времени, а разброс к этому
+    // моменту уже виден. Меньше одного — это просто «выключить проверку».
+    humanCheckRuns: Math.max(1, Math.min(5, parseInt($("setHumanRuns").value, 10) || 3)),
+    detectModel: $("setDetectModel").value.trim(),
   };
   const key = $("setApiKey").value.trim();
   if (key) { if (provider === "google") patch.googleKey = key; else patch.apiKey = key; }
@@ -1268,6 +1393,83 @@ async function saveSettings() {
   $("overlay").classList.remove("open");
   toast("Настройки сохранены");
   loadModels(false);
+}
+
+/* -------------------------------------------------------- отчёт об ошибке */
+
+/* Отправляет не программа, а человек: форма открывается в браузере и уходит
+   от его учётной записи. Свой сервер-посредник пришлось бы держать и
+   защищать, а токен, зашитый в открытый исходник, всё равно что публичный —
+   им бы и спамили. Поэтому отправки «изнутри» тут нет намеренно. */
+let repCtx = { answer: "", model: "" };
+
+function openReport(ctx) {
+  repCtx = ctx || {};
+  $("repWhat").value = "";
+  $("repSteps").value = "";
+  $("repSystem").checked = true;
+  $("repLog").checked = true;
+  $("repAnswer").checked = false;
+  $("repAnswerWrap").hidden = !(repCtx.answer || "").trim();
+  $("repPreview").hidden = true;
+  $("repPreview").textContent = "";
+  $("repErr").textContent = "";
+  $("repHint").textContent = "Ключи в отчёт не попадают: всё чистится перед отправкой.";
+  const pub = document.querySelector('input[name="repWhere"][value="public"]');
+  if (pub) pub.checked = true;
+  $("reportOverlay").classList.add("open");
+  setTimeout(() => $("repWhat").focus(), 60);
+}
+
+function reportData() {
+  const where = document.querySelector('input[name="repWhere"]:checked');
+  return {
+    what: $("repWhat").value,
+    steps: $("repSteps").value,
+    withSystem: $("repSystem").checked,
+    withLog: $("repLog").checked,
+    withAnswer: $("repAnswer").checked,
+    answer: repCtx.answer || "",
+    model: repCtx.model || S.settings.model || "",
+    private: !!where && where.value === "private",
+  };
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function sendReport() {
+  const data = reportData();
+  if (!data.what.trim()) {
+    $("repErr").textContent = "Опишите, что случилось";
+    $("repWhat").focus();
+    return;
+  }
+  $("repErr").textContent = "";
+  const res = await api().send_report(data);
+  if (!res || !res.ok) {
+    $("repErr").textContent = (res && res.error) || "Не удалось открыть браузер";
+    return;
+  }
+  const copied = await copyText(res.text);
+  $("reportOverlay").classList.remove("open");
+  // Закрытая форма через адрес ничего не принимает — поля там заполняются
+  // руками, поэтому текст заранее кладём в буфер.
+  if (res.private) {
+    toast(copied ? "Форма открыта, отчёт в буфере — вставьте его в описание"
+                 : "Форма открыта — опишите в ней то же самое");
+  } else if (res.truncated) {
+    toast(copied ? "Отчёт длинный: в адрес влезло начало, целиком он в буфере"
+                 : "Отчёт длинный — в форму попало только начало");
+  } else {
+    toast("Форма открыта в браузере");
+  }
 }
 
 function updateToolsChip() {
@@ -1363,7 +1565,11 @@ function bindUi() {
     }
 
     if (e.key === "Escape") {
-      if (settingsOpen) { $("overlay").classList.remove("open"); e.preventDefault(); }
+      // Отчёт закрываем первым: он открывается поверх настроек.
+      if ($("reportOverlay").classList.contains("open")) {
+        $("reportOverlay").classList.remove("open"); e.preventDefault();
+      }
+      else if (settingsOpen) { $("overlay").classList.remove("open"); e.preventDefault(); }
       else if ($("modelMenu").classList.contains("open")) {
         $("modelMenu").classList.remove("open"); e.preventDefault();
       } else if (fsOn) { toggleFullscreen(false); e.preventDefault(); }
@@ -1428,6 +1634,32 @@ function bindUi() {
     if (e.target === $("overlay")) $("overlay").classList.remove("open");
   });
   $("btnSaveSettings").onclick = saveSettings;
+
+  // отчёт об ошибке и страница помощников
+  $("btnReportSettings").onclick = () => openReport({ model: S.settings.model });
+  $("btnCloseReport").onclick = () => $("reportOverlay").classList.remove("open");
+  $("reportOverlay").addEventListener("click", (e) => {
+    if (e.target === $("reportOverlay")) $("reportOverlay").classList.remove("open");
+  });
+  $("btnRepSend").onclick = sendReport;
+  // Человек начал дописывать — старая жалоба под кнопкой больше не про него.
+  $("repWhat").oninput = () => { $("repErr").textContent = ""; };
+  $("btnRepCopy").onclick = async () => {
+    const res = await api().preview_report(reportData());
+    const ok = res && res.ok && await copyText(res.text);
+    toast(ok ? "Отчёт в буфере обмена" : "Не удалось скопировать");
+  };
+  $("btnRepPreview").onclick = async () => {
+    const box = $("repPreview");
+    if (!box.hidden) { box.hidden = true; return; }
+    const res = await api().preview_report(reportData());
+    box.textContent = (res && res.text) || "";
+    box.hidden = false;
+  };
+  $("btnHelpers").onclick = async () => {
+    const res = await api().open_url(S.links.helpers || "");
+    if (!res || !res.ok) toast((res && res.error) || "Не удалось открыть");
+  };
 
   $("setAutostart").onchange = async () => {
     const box = $("setAutostart");
@@ -1540,6 +1772,7 @@ async function init() {
     S.dataDir = data.dataDir;
     S.version = data.version || "";
     S.fallbackModels = data.fallbackModels || [];
+    S.links = data.links || {};
 
     document.documentElement.dataset.theme = S.settings.theme || "dark";
     setModelLabel(S.settings.model);

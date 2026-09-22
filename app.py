@@ -14,6 +14,7 @@ import collections
 import ctypes
 import json
 import os
+import platform
 import re
 import socket
 import subprocess
@@ -26,16 +27,43 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import webbrowser
 
 import webview
 
+# Детектор ИИ-текста лежит рядом целиком — см. detector/__init__.py.
+from detector.features import extract as detect_features
+from detector.judge import SYSTEM as JUDGE_SYSTEM
+from detector.judge import TASK as JUDGE_TASK
+from detector.judge import JudgeError, parse as parse_judge
+from detector.model import Model as DetectModel
+from detector.text import Doc
+
 APP_NAME = "Gemini Desktop"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 
 # Откуда берутся обновления: выпуски GitHub. Нужен публичный репозиторий —
 # у закрытого тот же адрес отвечает 404, и проверка молча ничего не находит.
 GITHUB_REPO = "aloprobr-ai/gemini-desktop"
 GITHUB_API = "https://api.github.com"
+
+# Отчёты об ошибках. Токен в программу не зашит и зашит не будет: исходник
+# открыт, а значит любой ключ из него достанут и разошлют им что угодно.
+# Поэтому отчёт отправляет сам человек — из браузера, своей учётной записью.
+#
+#   открыто  — обычная задача в репозитории: видна всем, и это нормально;
+#   закрыто  — форма приватного сообщения GitHub. Её читают только те, у кого
+#              есть права на репозиторий, а отправить может кто угодно.
+#              Ровно то, что нужно: писать можно, читать чужое — нет.
+REPORT_PUBLIC_URL = "https://github.com/%s/issues/new" % GITHUB_REPO
+REPORT_PRIVATE_URL = "https://github.com/%s/security/advisories/new" % GITHUB_REPO
+
+# Кто помогал проекту. Файл лежит в корне репозитория и открыт всем.
+HELPERS_URL = "https://github.com/%s/blob/main/Helpers.md" % GITHUB_REPO
+
+# В адресную строку влезает не всё: длинные отчёты браузер обрезает молча.
+# Поэтому в ссылку кладём начало, а целиком кладём в буфер обмена.
+REPORT_URL_LIMIT = 5500
 
 # Запасной путь: свой шлюз с /up. Задаётся ключом "updateUrl" в settings.json
 # и в окне настроек не показывается — это на случай, когда GitHub недоступен
@@ -151,6 +179,10 @@ DEFAULT_SETTINGS = {
     "defaultDir": "",
     "proxy": "",
     "theme": "dark",
+    # /human переписывает текст живым языком — а проверка смотрит, получилось ли.
+    "humanCheck": True,
+    "humanCheckRuns": 3,
+    "detectModel": "",     # пусто — судить будет DETECT_MODEL
 }
 
 # Шлюз отдаёт вперемешку настоящие модели и псевдонимы вроде agy-fast или gpt-4o,
@@ -1467,6 +1499,258 @@ def sent_text(msg):
     return msg.get("sendAs") or msg.get("text") or ""
 
 
+# ------------------------------------------- проверка: живой ли текст вышел
+
+# Судить просим модель потолще: на быстрых оценка от захода к заходу гуляет
+# шире, чем различаются сами тексты, и три захода тогда меряют не текст.
+DETECT_MODEL = "gemini-3.1-pro-high"
+
+# Ниже этой длины счёт — гадание. Половина признаков считается по разбросу
+# длин предложений, а на пяти предложениях разброса ещё нет.
+DETECT_MIN_WORDS = 60
+
+# Дальше судья всё равно читает по диагонали, а запрос дорожает.
+DETECT_MAX_CHARS = 20000
+
+# Хвост ответа /human — служебный: метки «нужна деталь», отчёт о вырезанном
+# и три переписанные фразы. Судить надо сам текст: иначе детектор читает
+# отчёт редактора и справедливо находит в нём машинный почерк.
+HUMAN_TAIL = re.compile(r"^\s*(?:\*\*|#+\s*)?нужны\s+детали", re.I | re.M)
+
+
+def human_body(text):
+    """Переписанный текст без служебного хвоста."""
+    text = (text or "").strip()
+    cut = HUMAN_TAIL.search(text)
+    if cut:
+        text = text[:cut.start()].strip()
+    return text
+
+
+def detect_verdict(prob):
+    if prob >= 0.80:
+        return "похоже на ИИ"
+    if prob >= 0.60:
+        return "скорее ИИ"
+    if prob > 0.40:
+        return "не берусь сказать"
+    if prob > 0.20:
+        return "скорее человек"
+    return "похоже на человека"
+
+
+def judge_model(settings, chat_model=""):
+    """Кого спрашивать. У Google свои имена моделей, шлюзовые там не работают."""
+    picked = (settings.get("detectModel") or "").strip()
+    if picked:
+        return picked
+    if settings.get("provider") == "google":
+        return chat_model or settings.get("model") or ""
+    return DETECT_MODEL
+
+
+def judge_once(text, settings, model, timeout=120):
+    """Одно суждение модели.
+
+    Своя отправка, а не detector.judge.ask: тот берёт ключ из окружения и
+    ходит напрямую, а здесь и ключ, и прокси уже лежат в настройках.
+    """
+    opener = build_opener(settings.get("proxy"))
+    task = JUDGE_TASK % text
+
+    if settings.get("provider") == "google":
+        url = "%s/models/%s:generateContent" % (GOOGLE_ROOT, urllib.parse.quote(model))
+        payload = {
+            "systemInstruction": {"parts": [{"text": JUDGE_SYSTEM}]},
+            "contents": [{"role": "user", "parts": [{"text": task}]}],
+            "generationConfig": {"temperature": 0},
+        }
+        headers = {"Content-Type": "application/json; charset=utf-8",
+                   "x-goog-api-key": (settings.get("googleKey") or "").strip()}
+    else:
+        url = (settings.get("baseUrl") or "").rstrip("/") + "/chat/completions"
+        payload = {
+            "model": model,
+            "temperature": 0,
+            "messages": [{"role": "system", "content": JUDGE_SYSTEM},
+                         {"role": "user", "content": task}],
+        }
+        headers = {
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": "Bearer " + (settings.get("apiKey") or "").strip(),
+            # Шлюз agy ведёт диалог у себя. Без своей сессии три захода подряд
+            # склеиваются в одну беседу, и второй ответ приходит уже не про текст.
+            "X-Session-Id": uuid.uuid4().hex,
+        }
+
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    try:
+        # Сборка запроса тоже под защитой: при пустом Base URL адрес выходит
+        # куском пути, и urllib ругается ещё до того, как что-то ушло в сеть.
+        req = urllib.request.Request(url, data=body, method="POST", headers=headers)
+        with opener.open(req, timeout=timeout) as resp:
+            answer = json.loads(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as exc:
+        raise JudgeError(scrub(http_error_text(exc)))
+    except Exception as exc:
+        raise JudgeError(exc_text(exc))
+
+    try:
+        if settings.get("provider") == "google":
+            parts = answer["candidates"][0]["content"]["parts"]
+            content = "".join(p.get("text", "") for p in parts)
+        else:
+            content = answer["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise JudgeError(scrub("непонятный ответ: " + json.dumps(answer)[:200]))
+    return parse_judge(content)
+
+
+def judge_text(text, settings, model, runs=3, timeout=120):
+    """Несколько заходов подряд.
+
+    Разброс показываем честно: при широком разбросе среднее ничего не значит,
+    и лучше это видеть, чем получить одно уверенное число из ниоткуда.
+    """
+    probs, results, errors = [], [], []
+    for _ in range(max(1, int(runs or 1))):
+        try:
+            res = judge_once(text, settings, model, timeout)
+        except JudgeError as exc:
+            errors.append(str(exc))
+            continue
+        results.append(res)
+        probs.append(res["prob"])
+    if not probs:
+        raise JudgeError(errors[0] if errors else "модель не ответила")
+    return {
+        "prob": sum(probs) / len(probs),
+        "spread": (max(probs) - min(probs)) if len(probs) > 1 else 0.0,
+        "runs": len(probs),
+        "failed": len(errors),
+        "summary": results[0]["summary"],
+        "observations": [ob for ob in results[0]["observations"]
+                         if isinstance(ob, dict)][:6],
+    }
+
+
+def check_human_text(text, settings, model, runs=3):
+    """Два счёта на один текст: признаки считаем сами, мнение спрашиваем.
+
+    Смешивать их в одно число нельзя — они считают разное. Когда расходятся,
+    это и есть самое полезное, что тут видно.
+    """
+    text = (text or "").strip()[:DETECT_MAX_CHARS]
+    doc = Doc(text, "ответ")
+    feats = detect_features(doc)
+    prob, parts = DetectModel.prior().score(feats)
+
+    out = {
+        "words": doc.n_words,
+        "short": doc.n_words < DETECT_MIN_WORDS,
+        "features": {
+            "prob": round(prob, 4),
+            "verdict": detect_verdict(prob),
+            "top": [{"name": p["name"],
+                     "side": "ии" if p["contrib"] > 0 else "человек"}
+                    for p in parts[:3]],
+        },
+        "judge": None,
+        "judgeError": None,
+        "disagree": False,
+    }
+    try:
+        res = judge_text(text, settings, model, runs)
+    except JudgeError as exc:
+        out["judgeError"] = scrub(str(exc))
+        return out
+
+    res["verdict"] = detect_verdict(res["prob"])
+    res["prob"] = round(res["prob"], 4)
+    res["spread"] = round(res["spread"], 4)
+    out["judge"] = res
+    out["disagree"] = abs(res["prob"] - prob) >= 0.3
+    return out
+
+
+# --------------------------------------------------------- отчёт об ошибке
+
+REPORT_TITLE_LIMIT = 90
+
+
+def boot_tail(limit=40):
+    """Последние строки boot.log. Ключи из них вычищены ещё при записи."""
+    try:
+        with open(BOOT_LOG, "r", encoding="utf-8", errors="replace") as fh:
+            rows = fh.readlines()
+    except Exception:
+        return "журнал недоступен"
+    return scrub("".join(rows[-limit:]).strip()) or "журнал пуст"
+
+
+def report_body(data, settings, version=APP_VERSION):
+    """Текст отчёта.
+
+    Ключи сюда попасть не могут: всё проходит через scrub, а адрес шлюза
+    сводится к одному имени хоста — в пути своего шлюза бывает и токен,
+    и внутренний адрес, которому наружу делать нечего.
+    """
+    data = dict(data or {})
+    lines = ["## Что случилось", (data.get("what") or "").strip() or "—", ""]
+    if (data.get("steps") or "").strip():
+        lines += ["## Как повторить", data["steps"].strip(), ""]
+    if (data.get("expected") or "").strip():
+        lines += ["## Чего ждали", data["expected"].strip(), ""]
+
+    if data.get("withSystem", True):
+        try:
+            host = urllib.parse.urlparse(settings.get("baseUrl") or "").hostname or ""
+        except Exception:
+            host = ""
+        lines += [
+            "## Обстановка",
+            "- Gemini Desktop %s" % version,
+            "- Windows %s (%s)" % (platform.version(), platform.machine()),
+            "- провайдер: %s" % (settings.get("provider") or "—"),
+            "- шлюз: %s" % (host or "—"),
+            "- модель: %s" % (data.get("model") or settings.get("model") or "—"),
+            "- прокси: %s" % ("задан" if (settings.get("proxy") or "").strip() else "нет"),
+            "",
+        ]
+
+    if data.get("withLog"):
+        lines += ["## Журнал запуска, последние строки", "```", boot_tail(), "```", ""]
+
+    if data.get("withAnswer") and (data.get("answer") or "").strip():
+        lines += ["## Ответ модели", "```", data["answer"].strip()[:4000], "```", ""]
+
+    lines += ["---",
+              "Отправлено из приложения. Ключи и переписка сюда не попадают:"
+              " в отчёте только то, что отмечено выше."]
+    return scrub("\n".join(lines).strip())
+
+
+def report_title(data):
+    """Заголовок. Тоже через scrub: он уходит в адресную строку браузера,
+    а туда человек мог вставить сообщение об ошибке вместе с ключом."""
+    what = scrub(" ".join((data.get("what") or "").split()))
+    if not what:
+        return "Отчёт об ошибке"
+    return what[:REPORT_TITLE_LIMIT] + ("…" if len(what) > REPORT_TITLE_LIMIT else "")
+
+
+def report_url(title, body, private=False):
+    """Куда вести браузер.
+
+    Закрытая форма через адрес ничего не принимает — поля там заполняются
+    руками. Поэтому её просто открываем, а текст кладём в буфер обмена.
+    """
+    if private:
+        return REPORT_PRIVATE_URL
+    query = urllib.parse.urlencode({"title": title, "body": body[:REPORT_URL_LIMIT]})
+    return REPORT_PUBLIC_URL + "?" + query
+
+
 # ------------------------------------------------------------------ бэкенды
 
 class OpenAIBackend:
@@ -2009,6 +2293,7 @@ class Api:
             "dataDir": DATA_DIR,
             "version": APP_VERSION,
             "fallbackModels": FALLBACK_MODELS,
+            "links": {"helpers": HELPERS_URL, "repo": "https://github.com/" + GITHUB_REPO},
         }
 
     def save_settings(self, patch):
@@ -2161,6 +2446,60 @@ class Api:
         except Exception:
             pass
         return False
+
+    def open_url(self, url):
+        """Наружу выпускаем только свои адреса на GitHub.
+
+        Ссылку сюда подаёт окно, а в окне живёт текст, пришедший от модели.
+        Открывать по нему что угодно нельзя — проверяем, куда ведёт.
+        """
+        url = str(url or "")
+        allowed = (HELPERS_URL, REPORT_PUBLIC_URL, REPORT_PRIVATE_URL,
+                   "https://github.com/" + GITHUB_REPO)
+        if not url.startswith(allowed):
+            return {"ok": False, "error": "Такой адрес приложение не открывает"}
+        try:
+            webbrowser.open(url)
+        except Exception as exc:
+            return {"ok": False, "error": exc_text(exc)}
+        return {"ok": True}
+
+    # ---------- отчёт об ошибке
+
+    def report_context(self):
+        """Что показать в окне отчёта до отправки."""
+        return {
+            "version": APP_VERSION,
+            "os": "Windows %s" % platform.version(),
+            "provider": self.settings.get("provider") or "",
+            "model": self.settings.get("model") or "",
+            "repo": GITHUB_REPO,
+            "helpers": HELPERS_URL,
+        }
+
+    def preview_report(self, data):
+        """Текст отчёта целиком — чтобы было видно, что именно уходит."""
+        return {"ok": True, "text": report_body(data, self.settings)}
+
+    def send_report(self, data):
+        """Открывает форму GitHub в браузере.
+
+        Отправляет человек, своей учётной записью: ни токена, ни своего
+        сервера тут нет. Токен в открытой программе всё равно что публичный,
+        а сервер-посредник пришлось бы держать и защищать самому.
+        """
+        data = dict(data or {})
+        if not (data.get("what") or "").strip():
+            return {"ok": False, "error": "Опишите, что случилось"}
+        text = report_body(data, self.settings)
+        private = bool(data.get("private"))
+        url = report_url(report_title(data), text, private)
+        try:
+            webbrowser.open(url)
+        except Exception as exc:
+            return {"ok": False, "error": exc_text(exc), "text": text}
+        return {"ok": True, "text": text, "private": private,
+                "truncated": (not private) and len(text) > REPORT_URL_LIMIT}
 
     def reveal(self, path):
         try:
@@ -2454,6 +2793,41 @@ class Api:
         self.emit({"type": "compacted", "chatId": chat["id"],
                    "at": chat["compactAt"]})
 
+    # ---------- проверка после /human
+
+    def _maybe_check_human(self, chat, message):
+        """Команда /human обещает живой текст. Проверка смотрит, вышло ли.
+
+        Считаем дважды: признаки — у себя, без сети, а мнение спрашиваем у
+        модели, и не один раз. Один заход судьи — это одно настроение;
+        три показывают ещё и разброс, а по разбросу видно, верить ли числу.
+        """
+        if not self.settings.get("humanCheck", True):
+            return
+        msgs = chat.get("messages") or []
+        if len(msgs) < 2 or msgs[-2].get("cmd") != "human":
+            return
+        body = human_body(message.get("text"))
+        if not body:
+            return
+        threading.Thread(target=self._run_check, args=(chat, message, body),
+                         daemon=True).start()
+
+    def _run_check(self, chat, message, body):
+        chat_id = chat["id"]
+        runs = int(self.settings.get("humanCheckRuns") or 3)
+        model = judge_model(self.settings, message.get("model") or "")
+        self.emit({"type": "check_start", "chatId": chat_id, "runs": runs})
+        try:
+            res = check_human_text(body, self.settings, model, runs)
+        except Exception as exc:
+            res = {"words": 0, "short": False, "features": None,
+                   "judge": None, "judgeError": exc_text(exc), "disagree": False}
+        res["model"] = model
+        message["check"] = res
+        self._persist_chat(chat)
+        self.emit({"type": "check_done", "chatId": chat_id, "check": res})
+
     def _system_text(self):
         parts = []
         if (self.settings.get("globalPrompt") or "").strip():
@@ -2546,6 +2920,10 @@ class Api:
         self._persist_chat(chat)
         self.emit({"type": "done", "chatId": chat_id, "message": message})
         self._notify_done(chat, message)
+        # Проверка идёт после «done»: она ходит в сеть ещё трижды, и держать
+        # ради неё окно в состоянии «генерирую» незачем.
+        if not message.get("error") and not message.get("stopped"):
+            self._maybe_check_human(chat, message)
 
 
 def run_tool_process():

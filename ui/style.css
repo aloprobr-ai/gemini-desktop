@@ -436,6 +436,37 @@ body.busy .icon-btn.stop { display: flex; }
   max-width: 780px; margin: 8px auto 0; text-align: center;
   font-size: 12px; color: var(--text-faint);
 }
+
+/* Подсказка по командам. Лежит над композером и не занимает места,
+   пока пуста, — иначе строка ввода прыгала бы при каждой косой.
+   Одна панель со строками в одну линию: перенос описания на вторую
+   строку разваливает список, поэтому длинное просто обрезается. */
+.cmd-hint { max-width: 780px; margin: 0 auto; display: none; }
+.cmd-hint.open {
+  display: block; margin-bottom: 8px; padding: 4px;
+  background: var(--bg-side); border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.cmd-item {
+  width: 100%; display: flex; align-items: baseline; gap: 7px;
+  background: none; border: none; border-radius: 6px; padding: 4px 10px;
+  color: var(--text); font: 13px/1.7 var(--font); cursor: pointer; text-align: left;
+}
+.cmd-item.on { background: var(--bg-hover); }
+.cmd-item b { flex: none; font-weight: 600; }
+.cmd-item span {
+  color: var(--text-faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Черта свёртки: выше неё переписка осталась в чате, но модели не уходит. */
+.compact-line {
+  max-width: 780px; margin: 18px auto; display: flex;
+  align-items: center; gap: 12px; color: var(--text-faint); font-size: 12px;
+}
+.compact-line::before, .compact-line::after {
+  content: ""; flex: 1; height: 1px; background: var(--border);
+}
 .link {
   background: none; border: none; color: var(--accent);
   cursor: pointer; font: inherit; padding: 0; text-decoration: underline;

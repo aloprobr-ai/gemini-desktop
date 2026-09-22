@@ -124,6 +124,8 @@
     </div>
 
     <div class="composer-wrap">
+      <!-- Подсказка по командам: всплывает, пока строка начинается с косой -->
+      <div class="cmd-hint" id="cmdHint"></div>
       <div class="composer">
         <!-- Приложенные картинки: миниатюры над строкой ввода -->
         <div class="attach-strip" id="attachStrip" hidden></div>
@@ -142,8 +144,8 @@
         </div>
       </div>
       <div class="composer-hint">
-        Enter — отправить, Shift+Enter — новая строка. Файлы сохраняются в
-        <button class="link" id="hintDir">Загрузки</button>.
+        Enter — отправить, Shift+Enter — новая строка, «/» — команды. Файлы
+        сохраняются в <button class="link" id="hintDir">Загрузки</button>.
       </div>
     </div>
   </main>

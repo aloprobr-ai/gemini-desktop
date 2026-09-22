@@ -19,6 +19,8 @@ const S = {
   thoughtBuf: "",
   node: null,
   raf: 0,
+  cmdSel: 0,        // выбранная строка в палитре команд
+  compactedAt: null, // свёртка случилась — перерисовать чат, когда ответ дойдёт
 };
 
 /* ------------------------------------------------------------- markdown */
@@ -634,6 +636,7 @@ async function openChat(id, force) {
   const thread = $("thread");
   thread.innerHTML = "";
   chat.messages.forEach((m, i) => {
+    if (i === chat.compactAt) thread.appendChild(compactDivider());
     const node = messageNode(m);
     node.classList.add("enter");
     // лёгкая лесенка: сообщения проявляются друг за другом, но без затягивания
@@ -669,6 +672,60 @@ async function ensureChat() {
   return chat;
 }
 
+/* ---------------------------------------------------------- команды */
+
+const COMMANDS = [
+  ["/human", "переписать текст живым языком"],
+  ["/compact", "свернуть разговор в сводку"],
+];
+
+/* Черта, ниже которой начинается то, что модель ещё видит. Всё выше
+   осталось в чате и читается по-прежнему, но в запрос больше не уходит. */
+function compactDivider() {
+  const el = document.createElement("div");
+  el.className = "compact-line";
+  el.innerHTML = "<span>Свёрнуто — выше модель не видит</span>";
+  return el;
+}
+
+/* Подсказку показываем, только пока набрано одно слово с косой:
+   «/hum» — да, а «/human текст» или «/usr/bin/php» — уже нет. */
+function commandMatches() {
+  const m = /^\/([a-zA-Zа-яА-Я]*)$/.exec($("input").value.trim());
+  if (!m) return [];
+  const pre = ("/" + m[1]).toLowerCase();
+  return COMMANDS.filter((c) => c[0].startsWith(pre));
+}
+
+function renderCommandHint() {
+  const box = $("cmdHint");
+  const list = commandMatches();
+  if (!list.length) {
+    box.classList.remove("open");
+    box.innerHTML = "";
+    S.cmdSel = 0;
+    return;
+  }
+  // Выбор не должен уезжать за список, когда он укоротился по мере набора.
+  S.cmdSel = Math.max(0, Math.min(S.cmdSel || 0, list.length - 1));
+  box.innerHTML = list.map(([name, what], i) =>
+    `<button class="cmd-item${i === S.cmdSel ? " on" : ""}" data-cmd="${name}">` +
+    `<b>${name}</b><span>${escapeHtml(what)}</span></button>`).join("");
+  box.classList.add("open");
+  box.querySelectorAll(".cmd-item").forEach((b, i) => {
+    b.onmousemove = () => { if (S.cmdSel !== i) { S.cmdSel = i; renderCommandHint(); } };
+    b.onclick = () => useCommand(b.dataset.cmd);
+  });
+}
+
+function useCommand(name) {
+  const input = $("input");
+  input.value = name + " ";
+  input.focus();
+  autoGrow();
+  renderCommandHint();
+}
+
 /* --------------------------------------------------------- отправка */
 
 async function send(text) {
@@ -680,6 +737,7 @@ async function send(text) {
   $("welcome").classList.add("hidden");
   $("input").value = "";
   autoGrow();
+  renderCommandHint();
 
   S.attach = [];
   renderAttach();
@@ -844,6 +902,12 @@ window.__ev = function (payload) {
       }
       break;
 
+    /* Свёртка приходит раньше "done". Перерисовывать сразу нельзя —
+       ответ ещё дописывается, поэтому просто запоминаем и ждём конца. */
+    case "compacted":
+      if (S.chat && S.chat.id === ev.chatId) S.compactedAt = ev.at;
+      break;
+
     case "done": {
       S.busy = false;
       document.body.classList.remove("busy");
@@ -852,6 +916,12 @@ window.__ev = function (payload) {
         S.node.replaceWith(fresh);
       }
       S.node = null;
+      if (S.compactedAt !== null && S.compactedAt !== undefined && S.chat) {
+        const id = S.chat.id;
+        S.compactedAt = null;
+        openChat(id, true).then(() => toast("Разговор свёрнут"));
+        break;
+      }
       if (S.chat) {
         api().get_chat(S.chat.id).then((c) => { if (c) S.chat = c; });
       }
@@ -1245,8 +1315,24 @@ function bindUi() {
 
   $("btnSend").onclick = () => send();
   $("btnStop").onclick = () => { if (S.chat) api().stop(S.chat.id); };
-  $("input").addEventListener("input", autoGrow);
+  $("input").addEventListener("input", () => { autoGrow(); renderCommandHint(); });
   $("input").addEventListener("keydown", (e) => {
+    // Пока открыта палитра команд, стрелки и Enter принадлежат ей.
+    const list = commandMatches();
+    if (list.length && $("cmdHint").classList.contains("open")) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        S.cmdSel = (S.cmdSel + (e.key === "ArrowDown" ? 1 : list.length - 1)) % list.length;
+        renderCommandHint();
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        useCommand(list[S.cmdSel][0]);
+        return;
+      }
+      if (e.key === "Escape") { $("cmdHint").classList.remove("open"); return; }
+    }
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   });
 

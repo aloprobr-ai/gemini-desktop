@@ -289,9 +289,9 @@
         <div class="block-title">Обратная связь</div>
         <div class="row-between">
           <em class="hint">Что-то сломалось или ведёт себя странно — расскажите.
-            Отчёт открывается в браузере, отправляете его вы сами, своей учётной
-            записью GitHub. Токена в программе нет и не будет: исходник открыт,
-            и любой зашитый ключ из него достанут.</em>
+            Отчёт увидит только автор программы: кнопка открывает разговор с ним
+            в Telegram, а сам отчёт кладётся в буфер обмена — останется вставить
+            его в чат. Никакой задачи в репозитории, никакого сервера-посредника.</em>
           <button class="mini-btn" id="btnReportSettings">Сообщить о баге</button>
         </div>
       </section>
@@ -366,19 +366,24 @@
         наружу, сначала чистится. Переписка не прикладывается тоже — кроме
         одного ответа, и только если отметить это выше.</em>
 
-      <div class="block-title">Куда</div>
-      <label class="radio">
-        <input type="radio" name="repWhere" value="public" checked>
-        <span><b>Открыто</b> — задача в репозитории. Видна всем, и так удобнее:
-          на неё можно сослаться, а другие увидят, что это уже известно.</span>
+      <div class="block-title">Подпись в Helpers.md</div>
+      <label class="check">
+        <input type="checkbox" id="repSign">
+        <span>Упомянуть меня, если по отчёту что-то починится</span>
       </label>
-      <label class="radio">
-        <input type="radio" name="repWhere" value="private">
-        <span><b>Закрыто</b> — форма приватного сообщения GitHub. Написать может
-          кто угодно, прочитать — только те, у кого есть права на репозиторий.
-          Сюда, если в отчёте личное: путь с вашим именем, адрес своего шлюза,
-          кусок переписки.</span>
-      </label>
+      <div class="grid2" id="repSignFields" hidden>
+        <label class="field">
+          <span>Как подписать</span>
+          <input id="repName" type="text" spellcheck="false" placeholder="@ник или имя">
+        </label>
+        <label class="field">
+          <span>Ссылка <em class="opt">необязательно</em></span>
+          <input id="repLink" type="text" spellcheck="false" placeholder="https://github.com/ник">
+        </label>
+      </div>
+      <em class="hint">Helpers.md открыт всем: строка с вашим именем и ссылкой
+        будет видна каждому, кто зайдёт в репозиторий. Без галочки об этом
+        в отчёте не будет ни слова. Передумаете — напишите, уберу.</em>
 
       <div class="row-between">
         <em class="hint" id="repHint"></em>
@@ -390,7 +395,7 @@
     <footer class="modal-foot">
       <em class="hint" id="repErr"></em>
       <button class="mini-btn" id="btnRepCopy">Скопировать</button>
-      <button class="primary" id="btnRepSend">Открыть GitHub</button>
+      <button class="primary" id="btnRepSend">Открыть Telegram</button>
     </footer>
   </div>
 </div>

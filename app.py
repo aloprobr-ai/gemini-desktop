@@ -40,7 +40,7 @@ from detector.model import Model as DetectModel
 from detector.text import Doc
 
 APP_NAME = "Gemini Desktop"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.0.0"
 
 # Откуда берутся обновления: выпуски GitHub. Нужен публичный репозиторий —
 # у закрытого тот же адрес отвечает 404, и проверка молча ничего не находит.
@@ -51,19 +51,24 @@ GITHUB_API = "https://api.github.com"
 # открыт, а значит любой ключ из него достанут и разошлют им что угодно.
 # Поэтому отчёт отправляет сам человек — из браузера, своей учётной записью.
 #
-#   открыто  — обычная задача в репозитории: видна всем, и это нормально;
-#   закрыто  — форма приватного сообщения GitHub. Её читают только те, у кого
-#              есть права на репозиторий, а отправить может кто угодно.
-#              Ровно то, что нужно: писать можно, читать чужое — нет.
-REPORT_PUBLIC_URL = "https://github.com/%s/issues/new" % GITHUB_REPO
-REPORT_PRIVATE_URL = "https://github.com/%s/security/advisories/new" % GITHUB_REPO
+# Путь один, и он закрытый: личный разговор в Telegram. Открытой задачи тут
+# нет намеренно — в отчёте об ошибке нередко описано, как программу сломать,
+# а открытая задача превращает такое описание в готовую инструкцию для
+# любого, кто её прочтёт. Выбора «куда» тоже нет: он перекладывал бы эту
+# оценку на человека, который пришёл пожаловаться на белое окно.
+#
+# Текст пробуем подставить в поле ввода: t.me/<ник>?text=... У ботов это
+# работает наверняка, у обычных учётных записей — как повезёт с клиентом,
+# Telegram такого не обещает. Поэтому отчёт всё равно кладётся в буфер
+# обмена: подставилось — хорошо, нет — остаётся вставить руками.
+REPORT_URL = "https://t.me/lisemicki"
+
+# В адрес влезает не всё, да и клиент длинный хвост обрежет молча.
+# В ссылку идёт начало, в буфер — отчёт целиком.
+REPORT_TEXT_LIMIT = 2000
 
 # Кто помогал проекту. Файл лежит в корне репозитория и открыт всем.
 HELPERS_URL = "https://github.com/%s/blob/main/Helpers.md" % GITHUB_REPO
-
-# В адресную строку влезает не всё: длинные отчёты браузер обрезает молча.
-# Поэтому в ссылку кладём начало, а целиком кладём в буфер обмена.
-REPORT_URL_LIMIT = 5500
 
 # Запасной путь: свой шлюз с /up. Задаётся ключом "updateUrl" в settings.json
 # и в окне настроек не показывается — это на случай, когда GitHub недоступен
@@ -183,6 +188,11 @@ DEFAULT_SETTINGS = {
     "humanCheck": True,
     "humanCheckRuns": 3,
     "detectModel": "",     # пусто — судить будет DETECT_MODEL
+    # Чем подписать строку в Helpers.md. Хранится, чтобы не набирать заново,
+    # но само по себе никуда не уходит: только с галочкой в окне отчёта.
+    "helperSign": False,
+    "helperName": "",
+    "helperLink": "",
 }
 
 # Шлюз отдаёт вперемешку настоящие модели и псевдонимы вроде agy-fast или gpt-4o,
@@ -1675,8 +1685,6 @@ def check_human_text(text, settings, model, runs=3):
 
 # --------------------------------------------------------- отчёт об ошибке
 
-REPORT_TITLE_LIMIT = 90
-
 
 def boot_tail(limit=40):
     """Последние строки boot.log. Ключи из них вычищены ещё при записи."""
@@ -1686,6 +1694,40 @@ def boot_tail(limit=40):
     except Exception:
         return "журнал недоступен"
     return scrub("".join(rows[-limit:]).strip()) or "журнал пуст"
+
+
+HELPER_NAME_LIMIT = 60
+HELPER_LINK_LIMIT = 200
+
+# Имя уходит в разметку Helpers.md, поэтому скобки из него убираем: иначе
+# подпись вида «ник](http://куда-нибудь)» превратит ссылку во что-то своё.
+BRACKETS = re.compile(r"[\[\]()<>]")
+
+
+def helper_sign(data):
+    """Строка «как подписать» для Helpers.md — или пусто.
+
+    Без галочки не собирается вовсе: имя человека в открытом файле должно
+    появляться потому, что он этого захотел, а не потому, что поле осталось
+    заполненным с прошлого раза.
+    """
+    if not data.get("sign"):
+        return ""
+    name = BRACKETS.sub("", " ".join((data.get("name") or "").split()))
+    name = name[:HELPER_NAME_LIMIT].strip()
+    if not name:
+        return ""
+    link = " ".join((data.get("link") or "").split())[:HELPER_LINK_LIMIT]
+    # Ссылку берём только внятную. «github.com/ник» без схемы в разметке
+    # превращается в путь внутри репозитория и ведёт в никуда.
+    if not link.startswith(("http://", "https://")):
+        link = ""
+    return "%s — %s" % (name, link) if link else name
+
+
+def report_link(text):
+    """Адрес разговора с подставленным текстом."""
+    return REPORT_URL + "?text=" + urllib.parse.quote(text[:REPORT_TEXT_LIMIT])
 
 
 def report_body(data, settings, version=APP_VERSION):
@@ -1724,31 +1766,14 @@ def report_body(data, settings, version=APP_VERSION):
     if data.get("withAnswer") and (data.get("answer") or "").strip():
         lines += ["## Ответ модели", "```", data["answer"].strip()[:4000], "```", ""]
 
+    sign = helper_sign(data)
+    if sign:
+        lines += ["## Подпись в Helpers.md", sign, ""]
+
     lines += ["---",
               "Отправлено из приложения. Ключи и переписка сюда не попадают:"
               " в отчёте только то, что отмечено выше."]
     return scrub("\n".join(lines).strip())
-
-
-def report_title(data):
-    """Заголовок. Тоже через scrub: он уходит в адресную строку браузера,
-    а туда человек мог вставить сообщение об ошибке вместе с ключом."""
-    what = scrub(" ".join((data.get("what") or "").split()))
-    if not what:
-        return "Отчёт об ошибке"
-    return what[:REPORT_TITLE_LIMIT] + ("…" if len(what) > REPORT_TITLE_LIMIT else "")
-
-
-def report_url(title, body, private=False):
-    """Куда вести браузер.
-
-    Закрытая форма через адрес ничего не принимает — поля там заполняются
-    руками. Поэтому её просто открываем, а текст кладём в буфер обмена.
-    """
-    if private:
-        return REPORT_PRIVATE_URL
-    query = urllib.parse.urlencode({"title": title, "body": body[:REPORT_URL_LIMIT]})
-    return REPORT_PUBLIC_URL + "?" + query
 
 
 # ------------------------------------------------------------------ бэкенды
@@ -2448,13 +2473,13 @@ class Api:
         return False
 
     def open_url(self, url):
-        """Наружу выпускаем только свои адреса на GitHub.
+        """Наружу выпускаем только свои адреса.
 
         Ссылку сюда подаёт окно, а в окне живёт текст, пришедший от модели.
         Открывать по нему что угодно нельзя — проверяем, куда ведёт.
         """
         url = str(url or "")
-        allowed = (HELPERS_URL, REPORT_PUBLIC_URL, REPORT_PRIVATE_URL,
+        allowed = (HELPERS_URL, REPORT_URL,
                    "https://github.com/" + GITHUB_REPO)
         if not url.startswith(allowed):
             return {"ok": False, "error": "Такой адрес приложение не открывает"}
@@ -2482,24 +2507,28 @@ class Api:
         return {"ok": True, "text": report_body(data, self.settings)}
 
     def send_report(self, data):
-        """Открывает форму GitHub в браузере.
+        """Открывает разговор в Telegram.
 
-        Отправляет человек, своей учётной записью: ни токена, ни своего
-        сервера тут нет. Токен в открытой программе всё равно что публичный,
-        а сервер-посредник пришлось бы держать и защищать самому.
+        Отправляет человек, из своего Telegram: ни токена, ни своего сервера
+        тут нет. Токен в открытой программе всё равно что публичный, а
+        сервер-посредник пришлось бы держать и защищать самому.
+
+        Текст пробуем подставить прямо в поле ввода, но обещать этого нельзя:
+        у обычной учётной записи `?text=` слушается не всяким клиентом.
+        Поэтому отчёт возвращаем ещё и окну — оно положит его в буфер обмена.
         """
         data = dict(data or {})
         if not (data.get("what") or "").strip():
             return {"ok": False, "error": "Опишите, что случилось"}
+        if data.get("sign") and not helper_sign(data):
+            return {"ok": False, "error": "Укажите, как вас подписать"}
         text = report_body(data, self.settings)
-        private = bool(data.get("private"))
-        url = report_url(report_title(data), text, private)
         try:
-            webbrowser.open(url)
+            webbrowser.open(report_link(text))
         except Exception as exc:
             return {"ok": False, "error": exc_text(exc), "text": text}
-        return {"ok": True, "text": text, "private": private,
-                "truncated": (not private) and len(text) > REPORT_URL_LIMIT}
+        return {"ok": True, "text": text,
+                "truncated": len(text) > REPORT_TEXT_LIMIT}
 
     def reveal(self, path):
         try:

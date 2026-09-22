@@ -7,6 +7,7 @@
 
     python tests/test_check_report.py
 """
+import io
 import os
 import sys
 
@@ -172,19 +173,72 @@ quiet = app.report_body({'what': 'что-то', 'withSystem': False}, settings)
 check('без галочки обстановка не уходит', 'Обстановка' not in quiet)
 check('без галочки ответ модели не уходит', 'Ответ модели' not in quiet)
 
-title = app.report_title(data)
-check('заголовок тоже чистится', 'sk-очень' not in title, title)
-check('заголовок не бесконечный', len(title) <= app.REPORT_TITLE_LIMIT + 1, len(title))
-check('пустому описанию — свой заголовок',
-      app.report_title({}) == 'Отчёт об ошибке')
+check('пустое описание не отправляется',
+      make_api().send_report({'what': '   '}) ==
+      {'ok': False, 'error': 'Опишите, что случилось'})
 
-url = app.report_url(title, text, private=False)
-check('открытый путь ведёт в задачи', url.startswith(app.REPORT_PUBLIC_URL + '?'))
-check('в адрес попали и заголовок, и тело', 'title=' in url and 'body=' in url)
-long_url = app.report_url('t', 'ю' * 40000, private=False)
-check('длинный отчёт адрес не раздувает', len(long_url) < 60000, len(long_url))
-check('закрытый путь ведёт в приватную форму',
-      app.report_url(title, text, private=True) == app.REPORT_PRIVATE_URL)
+print('\nподпись в Helpers.md')
+check('без галочки подписи нет',
+      app.helper_sign({'name': 'Вася', 'link': 'https://example.invalid'}) == '')
+check('без имени подписи нет', app.helper_sign({'sign': True, 'name': '  '}) == '')
+check('имя и ссылка вместе',
+      app.helper_sign({'sign': True, 'name': '@vasya',
+                       'link': 'https://github.com/vasya'})
+      == '@vasya — https://github.com/vasya')
+check('без ссылки одно имя',
+      app.helper_sign({'sign': True, 'name': '@vasya'}) == '@vasya')
+check('ссылка без схемы не берётся',
+      app.helper_sign({'sign': True, 'name': 'Вася',
+                       'link': 'github.com/vasya'}) == 'Вася')
+# Подпись уходит в разметку Helpers.md, и скобки в ней переписали бы ссылку.
+check('скобки из имени вырезаны',
+      app.helper_sign({'sign': True, 'name': 'Вася](http://злое.место)'})
+      == 'Васяhttp://злое.место')
+check('имя не бесконечное',
+      len(app.helper_sign({'sign': True, 'name': 'я' * 500}))
+      <= app.HELPER_NAME_LIMIT)
+check('подпись попадает в отчёт',
+      'Подпись в Helpers.md' in app.report_body(
+          {'what': 'что-то', 'sign': True, 'name': '@vasya'}, settings))
+check('без галочки раздела в отчёте нет',
+      'Подпись в Helpers.md' not in app.report_body(
+          {'what': 'что-то', 'name': '@vasya'}, settings))
+check('галочка без имени не отправляется',
+      make_api().send_report({'what': 'окно белеет', 'sign': True, 'name': ''})
+      == {'ok': False, 'error': 'Укажите, как вас подписать'})
+
+print('\nкуда уходит отчёт')
+# Открытого пути нет и не должно появиться: отчёт об ошибке нередко описывает,
+# как программу сломать, а открытая задача делает из этого инструкцию.
+check('путь ведёт в Telegram', app.REPORT_URL.startswith('https://t.me/'),
+      app.REPORT_URL)
+check('адреса открытой задачи в программе нет',
+      not hasattr(app, 'REPORT_PUBLIC_URL'))
+check('выбора «куда» в окне нет',
+      'repWhere' not in io.open(os.path.join(os.path.dirname(os.path.dirname(
+          os.path.abspath(__file__))), 'ui', 'index.html'), encoding='utf-8').read())
+
+link = app.report_link(text)
+check('текст подставлен в адрес', link.startswith(app.REPORT_URL + '?text='))
+check('ключ не утёк и в адрес', 'sk-очень' not in link
+      and 'sk-%D0%BE%D1%87%D0%B5%D0%BD%D1%8C' not in link)
+long_link = app.report_link('ю' * 40000)
+check('длинный отчёт адрес не раздувает', len(long_link) < 20000, len(long_link))
+
+# Браузер в тестах не открываем: иначе каждый прогон дёргает Telegram.
+opened = []
+real_open, app.webbrowser.open = app.webbrowser.open, opened.append
+try:
+    res = make_api().send_report({'what': 'окно белеет'})
+    check('отчёт вернулся окну — для буфера обмена', bool(res.get('text')))
+    check('короткий отчёт не помечен обрезанным', res.get('truncated') is False)
+    check('браузер позвали ровно раз', len(opened) == 1, opened)
+    check('позвали по нужному адресу', opened[0].startswith(app.REPORT_URL))
+    big = make_api().send_report({'what': 'ю' * 30000})
+    check('длинный отчёт помечен обрезанным', big.get('truncated') is True)
+    check('в буфер уходит целиком', len(big['text']) > app.REPORT_TEXT_LIMIT)
+finally:
+    app.webbrowser.open = real_open
 
 print('\nчужие адреса не открываем')
 api = make_api()

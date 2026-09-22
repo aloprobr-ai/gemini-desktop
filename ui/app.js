@@ -1398,9 +1398,15 @@ async function saveSettings() {
 /* -------------------------------------------------------- отчёт об ошибке */
 
 /* Отправляет не программа, а человек: форма открывается в браузере и уходит
-   от его учётной записи. Свой сервер-посредник пришлось бы держать и
+   из его Telegram. Свой сервер-посредник пришлось бы держать и
    защищать, а токен, зашитый в открытый исходник, всё равно что публичный —
-   им бы и спамили. Поэтому отправки «изнутри» тут нет намеренно. */
+   им бы и спамили. Поэтому отправки «изнутри» тут нет намеренно.
+
+   Путь один, и он закрытый: разговор в Telegram. Выбора «открыто или
+   закрыто» здесь не было и не будет — в отчёте об ошибке нередко описано,
+   как программу сломать, а открытая задача превращает такое описание в
+   готовую инструкцию. Решать это не человеку, который пришёл пожаловаться
+   на белое окно. */
 let repCtx = { answer: "", model: "" };
 
 function openReport(ctx) {
@@ -1411,18 +1417,21 @@ function openReport(ctx) {
   $("repLog").checked = true;
   $("repAnswer").checked = false;
   $("repAnswerWrap").hidden = !(repCtx.answer || "").trim();
+  // Подпись помним между отчётами, а согласие — нет: галочку человек ставит
+  // каждый раз заново. Имя в открытом файле не должно появляться по привычке.
+  $("repSign").checked = false;
+  $("repName").value = S.settings.helperName || "";
+  $("repLink").value = S.settings.helperLink || "";
+  $("repSignFields").hidden = true;
   $("repPreview").hidden = true;
   $("repPreview").textContent = "";
   $("repErr").textContent = "";
-  $("repHint").textContent = "Ключи в отчёт не попадают: всё чистится перед отправкой.";
-  const pub = document.querySelector('input[name="repWhere"][value="public"]');
-  if (pub) pub.checked = true;
+  $("repHint").textContent = "Отчёт уйдёт в Telegram автору программы.";
   $("reportOverlay").classList.add("open");
   setTimeout(() => $("repWhat").focus(), 60);
 }
 
 function reportData() {
-  const where = document.querySelector('input[name="repWhere"]:checked');
   return {
     what: $("repWhat").value,
     steps: $("repSteps").value,
@@ -1431,7 +1440,9 @@ function reportData() {
     withAnswer: $("repAnswer").checked,
     answer: repCtx.answer || "",
     model: repCtx.model || S.settings.model || "",
-    private: !!where && where.value === "private",
+    sign: $("repSign").checked,
+    name: $("repName").value,
+    link: $("repLink").value,
   };
 }
 
@@ -1457,18 +1468,23 @@ async function sendReport() {
     $("repErr").textContent = (res && res.error) || "Не удалось открыть браузер";
     return;
   }
+  // Подпись запоминаем только после удачной отправки — иначе в настройках
+  // осело бы то, что человек набрал и передумал отправлять.
+  if (data.sign) {
+    S.settings = await api().save_settings({
+      helperName: data.name.trim(), helperLink: data.link.trim(),
+    });
+  }
   const copied = await copyText(res.text);
   $("reportOverlay").classList.remove("open");
-  // Закрытая форма через адрес ничего не принимает — поля там заполняются
-  // руками, поэтому текст заранее кладём в буфер.
-  if (res.private) {
-    toast(copied ? "Форма открыта, отчёт в буфере — вставьте его в описание"
-                 : "Форма открыта — опишите в ней то же самое");
-  } else if (res.truncated) {
-    toast(copied ? "Отчёт длинный: в адрес влезло начало, целиком он в буфере"
-                 : "Отчёт длинный — в форму попало только начало");
+  // Текст подставлен в адрес, но обещать этого нельзя: у обычной учётной
+  // записи `?text=` слушается не всяким клиентом. Буфер — на этот случай.
+  if (!copied) {
+    toast("Telegram открыт — расскажите в чате то же самое");
   } else {
-    toast("Форма открыта в браузере");
+    toast(res.truncated
+      ? "Telegram открыт: в поле влезло начало, целиком отчёт в буфере"
+      : "Telegram открыт. Не подставилось — отчёт в буфере обмена");
   }
 }
 
@@ -1644,6 +1660,12 @@ function bindUi() {
   $("btnRepSend").onclick = sendReport;
   // Человек начал дописывать — старая жалоба под кнопкой больше не про него.
   $("repWhat").oninput = () => { $("repErr").textContent = ""; };
+  $("repName").oninput = () => { $("repErr").textContent = ""; };
+  $("repSign").onchange = () => {
+    const on = $("repSign").checked;
+    $("repSignFields").hidden = !on;
+    if (on && !$("repName").value.trim()) $("repName").focus();
+  };
   $("btnRepCopy").onclick = async () => {
     const res = await api().preview_report(reportData());
     const ok = res && res.ok && await copyText(res.text);

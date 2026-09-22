@@ -579,14 +579,6 @@ body.busy .icon-btn.stop { display: flex; }
 .field textarea:focus { border-color: var(--accent); }
 .field > span .opt { color: var(--text-faint); font-style: normal; font-size: 12.5px; }
 
-.radio {
-  display: flex; gap: 10px; margin-top: 12px; font-size: 13.5px;
-  line-height: 1.5; cursor: pointer; color: var(--text-dim);
-}
-.radio input { margin-top: 3px; width: 16px; height: 16px; flex: none;
-               accent-color: var(--accent); cursor: pointer; }
-.radio b { color: var(--text); font-weight: 500; }
-
 .rep-preview {
   margin-top: 12px; max-height: 240px; overflow: auto;
   background: var(--bg-input); border: 1px solid var(--border);

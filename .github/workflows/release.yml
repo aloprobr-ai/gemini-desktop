@@ -1,0 +1,79 @@
+# Выпуск собирается здесь, а не на чьём-то компьютере: по тегу видно, из
+# какого кода получился установщик, и собрать его заново может любой.
+#
+# Порядок: поднять APP_VERSION в app.py, закоммитить, поставить тег vX.Y.Z
+# и отправить его. Сборка сделает черновик выпуска с MSI и контрольной суммой.
+# Черновик приложение не видит — обновление уйдёт людям, только когда выпуск
+# опубликуют руками, дописав заметки.
+name: Выпуск
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  msi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Зависимости
+        run: pip install -r requirements.txt pyinstaller==6.22.3
+
+      - name: Версия в теге совпадает с app.py
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path app.py -Pattern '^APP_VERSION = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$v" -ne "${{ github.ref_name }}") {
+            throw "тег ${{ github.ref_name }}, а в app.py $v — обновление увидело бы не ту версию"
+          }
+          "VERSION=$v" >> $env:GITHUB_ENV
+
+      - name: Проверки
+        run: |
+          python tests/test_commands.py
+          python tests/test_check_report.py
+          python tests/test_check_export.py
+
+      - name: exe
+        run: pyinstaller --noconfirm "Gemini Desktop.spec"
+
+      - name: WiX
+        run: |
+          dotnet tool install --global wix --version 6.0.2
+          & "$env:USERPROFILE/.dotnet/tools/wix.exe" extension add -g WixToolset.UI.wixext/6.0.2
+
+      - name: MSI и контрольная сумма
+        shell: pwsh
+        run: |
+          # pwsh, а не старый powershell: тот читает скрипт без BOM в кодировке
+          # системы, и на английской Windows кириллица в нём ломает кавычки
+          ./installer/build_msi.ps1
+          $msi = "GeminiDesktop-$env:VERSION.msi"
+          $hash = (Get-FileHash "dist/$msi" -Algorithm SHA256).Hash.ToLower()
+          # формат sha256sum; без BOM, иначе первая строка не разберётся
+          [IO.File]::WriteAllText("$PWD/dist/$msi.sha256", "$hash  $msi`n")
+          "MSI=$msi" >> $env:GITHUB_ENV
+
+      - name: Черновик выпуска
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag "dist/$env:MSI" "dist/$env:MSI.sha256" --clobber
+          } else {
+            gh release create $tag "dist/$env:MSI" "dist/$env:MSI.sha256" `
+              --draft --title "Gemini Desktop $env:VERSION" `
+              --notes "Черновик собран автоматически. Допишите заметки и опубликуйте."
+          }

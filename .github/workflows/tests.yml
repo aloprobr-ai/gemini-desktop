@@ -1,0 +1,34 @@
+# Проверки на каждый push и pull request. Сеть им не нужна: судья, браузер
+# и генерация подменены заглушками, а тесты с приставкой live_ здесь не гоняем.
+name: Проверки
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Зависимости
+        run: pip install -r requirements.txt
+
+      - name: Команды, свёртка, история
+        run: python tests/test_commands.py
+
+      - name: Проверка после /human и отчёт об ошибке
+        run: python tests/test_check_report.py
+
+      - name: /check, второй заход и выгрузка
+        run: python tests/test_check_export.py

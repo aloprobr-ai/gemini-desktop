@@ -1,0 +1,5 @@
+# То, без чего приложение не запустится. PyInstaller нужен только для сборки
+# и ставится отдельно — см. README и .github/workflows/release.yml.
+pywebview==6.2.1
+pystray==0.19.5
+pillow==12.3.0

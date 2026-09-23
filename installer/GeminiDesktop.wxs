@@ -51,8 +51,11 @@
                   Impersonate="yes"
                   Return="ignore" />
 
-    <Icon Id="AppIcon" SourceFile="$(var.IconFile)" />
-    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <!-- Расширение в имени обязательно: под этим именем значок лежит в кэше
+         установщика, и без «.ico» Windows не понимает, что это картинка, —
+         в поиске и в «Пуске» вместо значка выходил пустой лист. -->
+    <Icon Id="AppIcon.ico" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/aloprobr-ai/gemini-desktop" />
 
     <!-- ======================================== проверка WebView2 -->
@@ -99,8 +102,13 @@
     <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
       <Component Id="MainExe" Guid="8c41b7a2-5de6-4f39-b0c8-2a7f61d4e5b1">
         <File Id="GeminiExe" Name="Gemini Desktop.exe" Source="$(var.ExeFile)" KeyPath="yes">
+          <!-- Ярлык обычный, а не «рекламный»: рекламный ведёт не на exe, а
+               в недра установщика, и поиск Windows показывает его как чужой —
+               без значка и с пометкой вместо «Приложение». -->
           <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder"
-                    Name="Gemini Desktop" Icon="AppIcon" Advertise="yes" />
+                    Name="Gemini Desktop" Description="Клиент Gemini для Windows"
+                    WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico"
+                    Advertise="no" />
         </File>
       </Component>
     </ComponentGroup>
@@ -109,7 +117,7 @@
       <Component Id="DesktopShortcutComp" Guid="7d2e51a9-38fc-4b60-9c14-6ae0f3b28d55">
         <Shortcut Id="DesktopShortcut" Name="Gemini Desktop"
                   Target="[INSTALLFOLDER]Gemini Desktop.exe"
-                  WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" />
+                  WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico" />
         <RemoveFolder Id="RemoveDesktopShortcut" On="uninstall" />
         <!-- отметка в реестре: у ярлыка на рабочем столе нет своего пути в HKCU -->
         <RegistryValue Root="HKCU" Key="Software\GeminiDesktop"

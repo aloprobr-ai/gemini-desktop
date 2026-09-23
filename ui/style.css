@@ -259,7 +259,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .msg.user .bubble {
   background: var(--user-bubble); padding: 12px 18px;
   border-radius: 20px 20px 4px 20px; max-width: 78%;
-  white-space: pre-wrap; word-wrap: break-word;
+  white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
 .msg.model { display: flex; gap: 14px; }
@@ -268,7 +268,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
   display: flex; align-items: center; justify-content: center;
 }
 .avatar .spark { width: 24px; height: 24px; stroke: none; }
-.msg.model .body { flex: 1; min-width: 0; }
+.msg.model .body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
 .thoughts { margin-bottom: 12px; border-left: 2px solid var(--border); padding-left: 12px; }
 .thoughts summary {
@@ -338,6 +338,16 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 }
 .check-obs.to-ai { border-left-color: var(--danger); }
 .check-obs.to-human { border-left-color: var(--ok); }
+.check-again { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; }
+.check-again svg { width: 14px; height: 14px; }
+body.busy .check-again { opacity: .5; pointer-events: none; }
+mark.ai-mark {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: inherit;
+  border-bottom: 1px dashed color-mix(in srgb, var(--danger) 70%, transparent);
+  border-radius: 2px;
+  cursor: help;
+}
 
 .msg-actions { display: flex; gap: 2px; margin-top: 6px; opacity: 0; transition: opacity .15s; }
 .msg.model:hover .msg-actions { opacity: 1; }
@@ -348,7 +358,9 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .msg-actions button:hover { background: var(--bg-raised); color: var(--text); }
 .msg-actions svg { width: 16px; height: 16px; }
 
-.typing { display: inline-flex; gap: 4px; padding: 6px 0; }
+.typing { display: inline-flex; align-items: center; gap: 4px; padding: 6px 0; }
+.typing .wait-time { margin-left: 10px; font-size: 12.5px; color: var(--text-faint); }
+.typing .wait-time:empty { display: none; }
 .typing i {
   width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint);
   animation: blink 1.3s infinite;
@@ -368,7 +380,13 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .md a { color: var(--accent); }
 
 /* ----------------------------------------- приложенные картинки */
-.attach-strip { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px 0; }
+/* Ряд миниатюр занимает всю ширину композера и стоит над текстом. Без
+   flex-basis 100% он вставал столбиком слева и сжимал поле ввода вдвое. */
+.attach-strip {
+  flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 10px;
+  padding: 8px 12px 4px 0;
+}
+.attach-strip[hidden] { display: none; }
 .attach-item { position: relative; width: 72px; height: 72px; }
 .attach-item img {
   width: 100%; height: 100%; object-fit: cover;
@@ -381,9 +399,16 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
   display: flex; align-items: center; justify-content: center; font-size: 13px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
 }
+/* Одна картинка — крупно, как есть. Несколько — ровными квадратами в ряд:
+   иначе четыре снимка по 220 px вставали плиткой 2×2 на полэкрана. */
 .msg.user .bubble-images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.msg.user .bubble-images:last-child { margin-bottom: 0; }
 .msg.user .bubble-images img {
-  max-width: 220px; max-height: 220px; border-radius: 10px; display: block;
+  display: block; border-radius: 10px;
+  width: 112px; height: 112px; object-fit: cover;
+}
+.msg.user .bubble-images img:only-child {
+  width: auto; height: auto; max-width: 100%; max-height: 280px; object-fit: contain;
 }
 .composer.drop { outline: 2px dashed var(--accent); outline-offset: -4px; }
 .md .md-img {
@@ -443,13 +468,15 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 /* --------------------------------------------------------- композер */
 .composer-wrap { padding: 4px 24px 16px; }
 .composer {
-  max-width: 780px; margin: 0 auto; display: flex; align-items: flex-end; gap: 8px;
+  max-width: 780px; margin: 0 auto; display: flex; flex-wrap: wrap;
+  align-items: flex-end; gap: 8px;
   background: var(--bg-input); border: 1px solid var(--border);
   border-radius: 26px; padding: 8px 8px 8px 20px;
 }
 .composer:focus-within { border-color: var(--text-faint); }
 .composer textarea {
-  flex: 1; background: none; border: none; outline: none; resize: none;
+  flex: 1; min-width: 0; background: none; border: none; outline: none; resize: none;
+  overflow-wrap: anywhere;
   color: var(--text); font: 15px/1.6 var(--font); padding: 9px 0;
   max-height: 220px; min-height: 26px;
 }

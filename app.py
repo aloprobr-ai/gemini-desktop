@@ -40,7 +40,7 @@ from detector.model import Model as DetectModel
 from detector.text import Doc
 
 APP_NAME = "Gemini Desktop"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 # Откуда берутся обновления: выпуски GitHub. Нужен публичный репозиторий —
 # у закрытого тот же адрес отвечает 404, и проверка молча ничего не находит.
@@ -1321,12 +1321,21 @@ def _http_error_text(exc):
     try:
         err = json.loads(raw).get("error", {})
         msg = err.get("message") or raw
-        return ("HTTP %s: %s" % (exc.code, msg)).strip()
     except Exception:
-        if "<html" in raw.lower():
-            return ("HTTP %s — сервер вернул страницу ошибки, а не ответ API. "
-                    "Похоже, шлюз не смог обработать запрос." % exc.code)
-        return "HTTP %s: %s" % (exc.code, raw[:300])
+        msg = None
+    # nginx на шлюзе заворачивает свою 502 на страницу ошибки, и запрос
+    # возвращается в шлюз уже как GET — тот честно отвечает «Unknown endpoint».
+    # Человеку это ничего не говорит: на деле шлюз оборвал ответ, не дождавшись.
+    if exc.code == 502 and (msg is None or "Unknown endpoint" in str(msg)):
+        return ("HTTP 502: шлюз оборвал ответ, не дождавшись модели. Обычно так "
+                "бывает, когда ответ готовится слишком долго. Попробуйте ещё раз "
+                "или разбейте запрос на части.")
+    if msg is not None:
+        return ("HTTP %s: %s" % (exc.code, msg)).strip()
+    if "<html" in raw.lower():
+        return ("HTTP %s — сервер вернул страницу ошибки, а не ответ API. "
+                "Похоже, шлюз не смог обработать запрос." % exc.code)
+    return "HTTP %s: %s" % (exc.code, raw[:300])
 
 
 # ------------------------------------------------------------------ команды
@@ -1486,6 +1495,7 @@ COMPACT_RESUME = "Ниже — сводка нашего разговора до
 
 COMMANDS = {
     "/human": "Переписать текст живым языком",
+    "/check": "Проверить текст детектором, ничего не переписывая",
     "/compact": "Свернуть разговор в сводку",
 }
 
@@ -1501,7 +1511,51 @@ def visible_history(chat):
     """
     msgs = chat.get("messages") or []
     start = int(chat.get("compactAt") or 0)
-    return msgs[start:] if 0 < start < len(msgs) else msgs
+    msgs = msgs[start:] if 0 < start < len(msgs) else msgs
+    # /check модель не касается: и сама команда, и её итог живут только в окне.
+    return [m for m in msgs if not m.get("local")]
+
+
+def human_request(target, sample=""):
+    """Развёрнутый запрос /human: текст и образец стиля подставлены в промт."""
+    return (HUMAN_PROMPT
+            .replace("{{ТЕКСТ}}", target)
+            .replace("{{ОБРАЗЕЦ}}", (sample or "").strip() or "не приложен"))
+
+
+def rewrite_notes(check):
+    """Что сказать модели, когда проверка текст не пропустила.
+
+    Второй заход вслепую повторяет первый: модель не знает, где споткнулась.
+    Поэтому отдаём ей ровно то, что нашла проверка, — цитаты, которые выдали
+    машину, и признаки, тянувшие к ИИ, — и просим чинить прежде всего их.
+    """
+    judge = (check or {}).get("judge") or {}
+    feats = (check or {}).get("features") or {}
+    lead = judge or feats
+    head = "Этот текст уже переписывали, но проверка всё равно узнала в нём машину"
+    if lead.get("prob") is not None:
+        head += " (%d%% за ИИ)" % round(lead["prob"] * 100)
+    lines = ["", "", "ЗАМЕЧАНИЯ ПРОВЕРКИ", head + "."]
+
+    quotes = [ob for ob in judge.get("observations") or []
+              if isinstance(ob, dict) and ob.get("quote")
+              and str(ob.get("points_to") or "").startswith("и")]
+    if quotes:
+        lines.append("Места, которые выдали машинный почерк:")
+        for ob in quotes:
+            lines.append("— «%s» — %s" % (str(ob["quote"]).strip(),
+                                           str(ob.get("means") or "").strip()))
+    marks = [t for t in feats.get("top") or [] if t.get("side") == "ии"]
+    if marks:
+        lines.append("По счёту признаков к ИИ тянут:")
+        for t in marks:
+            lines.append("— %s: %s" % (t.get("name", ""), t.get("hint", "")))
+    if not quotes and not marks and judge.get("summary"):
+        lines.append("Общее впечатление проверки: " + judge["summary"])
+    lines.append("Перепиши прежде всего эти места. Остальное трогай, только если там "
+                 "тот же приём. Требования и формат ответа — прежние.")
+    return "\n".join(lines)
 
 
 def sent_text(msg):
@@ -1661,7 +1715,7 @@ def check_human_text(text, settings, model, runs=3):
         "features": {
             "prob": round(prob, 4),
             "verdict": detect_verdict(prob),
-            "top": [{"name": p["name"],
+            "top": [{"name": p["name"], "hint": p["hint"],
                      "side": "ии" if p["contrib"] > 0 else "человек"}
                     for p in parts[:3]],
         },
@@ -1681,6 +1735,77 @@ def check_human_text(text, settings, model, runs=3):
     out["judge"] = res
     out["disagree"] = abs(res["prob"] - prob) >= 0.3
     return out
+
+
+# ---------------------------------------------------------- выгрузка чата
+
+
+def fmt_time(ms):
+    try:
+        return time.strftime("%d.%m.%Y %H:%M", time.localtime(int(ms) / 1000.0))
+    except (TypeError, ValueError, OSError):
+        return ""
+
+
+def check_line(check):
+    """Итог проверки одной строкой — для выгрузки."""
+    judge, feats = check.get("judge"), check.get("features")
+    parts = []
+    if judge:
+        parts.append("модель — %d%% за ИИ (%s, заходов: %d)" % (
+            round(judge["prob"] * 100), judge.get("verdict", ""), judge.get("runs", 0)))
+    if feats:
+        parts.append("признаки — %d%% (%s)" % (round(feats["prob"] * 100),
+                                                feats.get("verdict", "")))
+    if check.get("judgeError"):
+        parts.append("модель не ответила: " + check["judgeError"])
+    return "; ".join(parts) or "проверить не вышло"
+
+
+def chat_markdown(chat):
+    """Чат одним Markdown-файлом, в том виде, в каком его видно в окне.
+
+    Уходит то, что показано человеку: «/human текст», а не развёрнутый промт.
+    Картинки не вкладываем — в тексте они стали бы мегабайтами base64.
+    """
+    title = chat.get("title") or "Новый чат"
+    out = ["# " + title, ""]
+    info = [x for x in (fmt_time(chat.get("createdAt")), chat.get("model")) if x]
+    if info:
+        out += ["_" + " · ".join(info) + "_", ""]
+    compact_at = int(chat.get("compactAt") or 0)
+    for i, msg in enumerate(chat.get("messages") or []):
+        if compact_at and i == compact_at:
+            out += ["---", "", "_Разговор свёрнут: выше модель уже не видит._", ""]
+        when = fmt_time(msg.get("ts"))
+        if msg.get("role") == "user":
+            out.append("### Вы" + (" · " + when if when else ""))
+            out.append("")
+            shots = len(msg.get("images") or [])
+            if shots:
+                out += ["_Картинок приложено: %d_" % shots, ""]
+            if msg.get("text"):
+                out += [msg["text"], ""]
+            continue
+        who = "Gemini" + (" · " + msg["model"] if msg.get("model") else "")
+        out += ["### " + who + (" · " + when if when else ""), ""]
+        for call in msg.get("calls") or []:
+            res = call.get("result") or {}
+            out += ["_Инструмент %s: %s_" % (call.get("name", ""),
+                                            res.get("path") or res.get("status") or ""), ""]
+        if msg.get("text"):
+            out += [msg["text"].strip(), ""]
+        if msg.get("check"):
+            out += ["> Проверка: " + check_line(msg["check"]), ""]
+        if msg.get("error"):
+            out += ["> Ошибка: " + msg["error"].strip().replace("\n", "\n> "), ""]
+        if msg.get("stopped"):
+            out += ["_Остановлено._", ""]
+    return "\n".join(out).rstrip() + "\n"
+
+
+def export_name(title):
+    return safe_filename((title or "Чат").strip()[:80] + ".md")
 
 
 # --------------------------------------------------------- отчёт об ошибке
@@ -2530,6 +2655,61 @@ class Api:
         return {"ok": True, "text": text,
                 "truncated": len(text) > REPORT_TEXT_LIMIT}
 
+    def _save_dialog(self, name):
+        try:
+            res = self._window.create_file_dialog(
+                webview.SAVE_DIALOG, directory=documents_dir(),
+                save_filename=name, file_types=("Markdown (*.md)", "Все файлы (*.*)"))
+        except Exception as exc:
+            blog("PY   окно сохранения не открылось: " + exc_text(exc))
+            return ""
+        if isinstance(res, (list, tuple)):
+            res = res[0] if res else ""
+        return res or ""
+
+    def export_chat(self, chat_id):
+        """Чат в Markdown — туда, куда укажет человек."""
+        chat = self._find(chat_id)
+        if not chat:
+            return {"ok": False, "error": "Чат не найден"}
+        path = self._save_dialog(export_name(chat.get("title")))
+        if not path:
+            return {"ok": False, "cancelled": True}
+        if not path.lower().endswith(".md"):
+            path += ".md"
+        try:
+            write_text(path, chat_markdown(chat))
+        except Exception as exc:
+            return {"ok": False, "error": "Не удалось записать: " + exc_text(exc)}
+        return {"ok": True, "path": path}
+
+    def export_all(self):
+        """Все чаты — по файлу на чат, в новую папку внутри выбранной."""
+        base = self.pick_folder()
+        if not base:
+            return {"ok": False, "cancelled": True}
+        folder = unique_path(os.path.join(
+            base, "Gemini Desktop — чаты " + time.strftime("%Y-%m-%d")))
+        count = 0
+        try:
+            os.makedirs(folder)
+            for meta in list(self.index):
+                chat = self._find(meta["id"])
+                if not chat or not chat.get("messages"):
+                    continue
+                write_text(unique_path(os.path.join(folder, export_name(chat.get("title")))),
+                           chat_markdown(chat))
+                count += 1
+        except Exception as exc:
+            return {"ok": False, "error": "Не удалось записать: " + exc_text(exc)}
+        if not count:
+            try:
+                os.rmdir(folder)
+            except OSError:
+                pass
+            return {"ok": False, "error": "Выгружать нечего: чатов с перепиской нет"}
+        return {"ok": True, "path": folder, "count": count}
+
     def reveal(self, path):
         try:
             if os.path.exists(path):
@@ -2702,16 +2882,23 @@ class Api:
             out.append(uri)
         return out
 
-    def send(self, chat_id, text, images=None):
-        chat = self._find(chat_id)
+    def _refuse(self, chat, chat_id):
+        """Почему отправлять нельзя, или None, если можно."""
         if not chat:
-            return {"ok": False, "error": "Чат не найден"}
+            return "Чат не найден"
         if chat_id in self.busy:
-            return {"ok": False, "error": "Ответ ещё генерируется"}
+            return "Ответ ещё генерируется"
         provider = self.settings.get("provider")
         key = self.settings.get("apiKey") if provider == "openai" else self.settings.get("googleKey")
         if not (key or "").strip():
-            return {"ok": False, "error": "Укажите API-ключ в настройках"}
+            return "Укажите API-ключ в настройках"
+        return None
+
+    def send(self, chat_id, text, images=None):
+        chat = self._find(chat_id)
+        error = self._refuse(chat, chat_id)
+        if error:
+            return {"ok": False, "error": error}
         text = (text or "").strip()
         images = self._clean_images(images)
         if not text and not images:
@@ -2720,15 +2907,51 @@ class Api:
         cmd = self._expand_command(chat, text)
         if cmd and cmd.get("error"):
             return {"ok": False, "error": cmd["error"]}
+        return self._submit(chat, text, images, cmd)
 
+    def rewrite_again(self, chat_id, ts=None):
+        """Проверка текст не пропустила — переписываем ещё раз, но уже зная где.
+
+        Берём тот же текст, что проверяли, и прикладываем к запросу /human
+        замечания проверки. Новый ответ проверяется так же, как первый.
+        """
+        chat = self._find(chat_id)
+        error = self._refuse(chat, chat_id)
+        if error:
+            return {"ok": False, "error": error}
+        msgs = chat["messages"]
+        idx = None
+        for i in range(len(msgs) - 1, 0, -1):
+            m = msgs[i]
+            if m["role"] == "model" and m.get("check") and (ts is None or m.get("ts") == ts):
+                idx = i
+                break
+        if idx is None:
+            return {"ok": False, "error": "Проверки для этого ответа нет"}
+        msg, asked = msgs[idx], msgs[idx - 1]
+        target = asked.get("target") if msg.get("local") else human_body(msg.get("text"))
+        if not (target or "").strip():
+            return {"ok": False, "error": "Текст для переписывания не нашёлся"}
+        send = (human_request(target, self.settings.get("styleSample"))
+                + rewrite_notes(msg["check"]))
+        cmd = {"send": send, "kind": "human", "title": target[:48]}
+        return self._submit(chat, "/human — ещё раз, по замечаниям проверки", [], cmd)
+
+    def _submit(self, chat, text, images, cmd):
+        chat_id = chat["id"]
         self.cancelled.discard(chat_id)
         entry = {"role": "user", "text": text, "ts": now_ms()}
         if images:
             entry["images"] = images
         if cmd:
-            # В окне остаётся «/human ...», а модели уходит развёрнутый запрос.
-            entry["sendAs"] = cmd["send"]
             entry["cmd"] = cmd["kind"]
+            if cmd.get("local"):
+                # /check: модель не зовём, текст держим при себе для повтора
+                entry["local"] = True
+                entry["target"] = cmd["target"]
+            else:
+                # В окне остаётся «/human ...», а модели уходит развёрнутый запрос.
+                entry["sendAs"] = cmd["send"]
         chat["messages"].append(entry)
         if chat.get("title") in (None, "", "Новый чат"):
             name = ((cmd or {}).get("title") or text
@@ -2737,8 +2960,28 @@ class Api:
             self.emit({"type": "title", "chatId": chat_id, "title": chat["title"]})
         chat["updatedAt"] = now_ms()
         self._persist_chat(chat)
-        threading.Thread(target=self._generate, args=(chat_id,), daemon=True).start()
+        if entry.get("local"):
+            self._start_check(chat, entry["target"])
+        else:
+            threading.Thread(target=self._generate, args=(chat_id,), daemon=True).start()
         return {"ok": True}
+
+    def _start_check(self, chat, target):
+        """Ответ на /check — не от модели, а от детектора.
+
+        Сообщение заводим сразу и сразу отдаём окну: проверка ходит в сеть
+        несколько раз, и всё это время на экране видно, что она идёт.
+        """
+        message = {"role": "model", "text": "", "kind": "check", "local": True,
+                   "ts": now_ms(), "model": chat.get("model") or self.settings["model"]}
+        chat["messages"].append(message)
+        self._persist_chat(chat)
+
+        def work():
+            self.emit({"type": "done", "chatId": chat["id"], "message": message})
+            self._run_check(chat, message, target)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def regenerate(self, chat_id):
         chat = self._find(chat_id)
@@ -2751,12 +2994,18 @@ class Api:
         self.cancelled.discard(chat_id)
         self._persist_chat(chat)
         self.emit({"type": "reload", "chatId": chat_id})
-        threading.Thread(target=self._generate, args=(chat_id,), daemon=True).start()
+        asked = chat["messages"][-1]
+        if asked.get("local"):
+            # для /check «ещё раз» — это ещё одна проверка того же текста
+            self._start_check(chat, asked.get("target") or "")
+        else:
+            threading.Thread(target=self._generate, args=(chat_id,), daemon=True).start()
         return {"ok": True}
 
     def _last_model_text(self, chat):
         for msg in reversed(chat.get("messages") or []):
-            if msg["role"] == "model" and (msg.get("text") or "").strip():
+            if (msg["role"] == "model" and not msg.get("local")
+                    and (msg.get("text") or "").strip()):
                 return msg["text"].strip()
         return ""
 
@@ -2779,10 +3028,17 @@ class Api:
             if not target:
                 return {"error": "После /human нужен текст — или хотя бы один ответ в чате"}
             sample = (getattr(self, "settings", None) or {}).get("styleSample") or ""
-            send = (HUMAN_PROMPT
-                    .replace("{{ТЕКСТ}}", target)
-                    .replace("{{ОБРАЗЕЦ}}", sample.strip() or "не приложен"))
-            return {"send": send, "kind": "human", "title": target[:48]}
+            return {"send": human_request(target, sample), "kind": "human",
+                    "title": target[:48]}
+
+        if name == "/check":
+            # Без текста проверяем последний ответ, а если это был /human —
+            # то сам переписанный текст, без отчёта редактора под ним.
+            target = rest or human_body(self._last_model_text(chat))
+            if not target:
+                return {"error": "После /check нужен текст — или хотя бы один ответ в чате"}
+            return {"kind": "check", "local": True, "target": target,
+                    "title": "Проверка: " + target[:38]}
 
         # /compact: сворачивать пустоту нечестно — получится сводка ни о чём.
         if not any(m["role"] == "model" and (m.get("text") or "").strip()
@@ -2855,7 +3111,8 @@ class Api:
         res["model"] = model
         message["check"] = res
         self._persist_chat(chat)
-        self.emit({"type": "check_done", "chatId": chat_id, "check": res})
+        self.emit({"type": "check_done", "chatId": chat_id, "check": res,
+                   "ts": message.get("ts")})
 
     def _system_text(self):
         parts = []

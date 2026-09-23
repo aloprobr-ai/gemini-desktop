@@ -242,6 +242,7 @@ const ICONS = {
   bug: '<path d="M9 6a3 3 0 0 1 6 0"/><rect x="7" y="8" width="10" height="12" rx="5"/>' +
        '<path d="M3 11h4M17 11h4M3 17h4M17 17h4M12 8v12"/>',
   check: '<path d="M20 6L9 17l-5-5"/>',
+  save: '<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>',
 };
 
 const scrollEl = () => $("scroll");
@@ -298,6 +299,7 @@ function renderChatList() {
       '<span class="row-actions">' +
         '<button data-act="pin"></button>' +
         '<button data-act="rename" title="Переименовать">' + icon(ICONS.pencil) + "</button>" +
+        '<button data-act="export" title="Сохранить в Markdown">' + icon(ICONS.save) + "</button>" +
         '<button data-act="delete" title="Удалить">' + icon(ICONS.trash) + "</button>" +
       "</span>";
     row.querySelector(".title").textContent = chat.title || "Новый чат";
@@ -310,6 +312,7 @@ function renderChatList() {
       if (act) {
         e.stopPropagation();
         if (act.dataset.act === "rename") renameChat(chat);
+        else if (act.dataset.act === "export") exportChat(chat);
         else if (act.dataset.act === "pin") togglePin(chat);
         else deleteChat(chat);
         return;
@@ -325,6 +328,26 @@ function label(text) {
   el.className = "side-label";
   el.textContent = text;
   return el;
+}
+
+async function exportChat(chat) {
+  const res = await api().export_chat(chat.id);
+  if (res && res.ok) {
+    toast("Сохранено: " + res.path.split(/[\\/]/).pop());
+    api().reveal(res.path);
+  } else if (res && res.error) {
+    toast(res.error);
+  }
+}
+
+async function exportAll() {
+  const res = await api().export_all();
+  if (res && res.ok) {
+    toast("Выгружено чатов: " + res.count);
+    api().open_path(res.path);
+  } else if (res && res.error) {
+    toast(res.error);
+  }
 }
 
 async function togglePin(chat) {
@@ -414,7 +437,8 @@ function messageNode(msg) {
   if (msg.thoughts) {
     const th = body.querySelector(".thoughts");
     th.hidden = false;
-    th.querySelector(".thought-text").textContent = msg.thoughts;
+    th.querySelector(".thought-text").textContent = thoughtText(msg.thoughts);
+    setThoughtTitle(th, msg.thoughts);
   }
   (msg.calls || []).forEach((call) => body.querySelector(".tools").appendChild(toolNode(call)));
   body.querySelector(".md").innerHTML = renderMarkdown(msg.text || "");
@@ -424,7 +448,11 @@ function messageNode(msg) {
     box.textContent = msg.error;
   }
 
-  if (msg.check) showCheck(body.querySelector(".check-box"), msg.check);
+  if (msg.check) {
+    showCheck(body.querySelector(".check-box"), msg.check, msg.ts);
+    markQuotes(body.querySelector(".md"), msg.check);
+  }
+  if (msg.kind === "check") body.querySelector('[data-act="copy"]').hidden = true;
 
   body.querySelector('[data-act="copy"]').addEventListener("click", () => {
     navigator.clipboard.writeText(msg.text || "").then(() => toast("Скопировано"));
@@ -441,7 +469,7 @@ function messageNode(msg) {
 /* Два счёта рядом и намеренно не сведены в один: признаки считаются здесь
    же, без сети, а мнение спрашивается у модели. Считают они разное, и когда
    расходятся — это и есть самое полезное, что тут видно. */
-function showCheck(box, check) {
+function showCheck(box, check, ts) {
   if (!box || !check) return;
   box.hidden = false;
   box.innerHTML = "";
@@ -499,6 +527,47 @@ function showCheck(box, check) {
     line.textContent = "«" + String(ob.quote || "").slice(0, 70) + "» — " +
       String(ob.means || "").slice(0, 80);
     box.appendChild(line);
+  });
+
+  /* Проверка не пропустила — второй заход уже знает, где споткнулся первый:
+     цитаты и признаки уходят модели вместе с просьбой переписать. */
+  if (lead && lead.prob > 0.4) {
+    const again = document.createElement("button");
+    again.className = "mini-btn check-again";
+    again.innerHTML = icon(ICONS.refresh) + "<span>Переписать ещё раз по замечаниям</span>";
+    again.onclick = () => rewriteAgain(ts);
+    box.appendChild(again);
+  }
+}
+
+/* Цитаты, которые выдали машину, подсвечиваем прямо в тексте ответа.
+   Судья цитирует не всегда дословно — обрезает многоточием, — поэтому ищем
+   самый длинный кусок цитаты, а не её целиком. Кусок, разорванный разметкой,
+   не найдётся; на такой случай цитата всё равно есть в самой проверке. */
+function markQuotes(md, check) {
+  const obs = ((check && check.judge && check.judge.observations) || [])
+    .filter((ob) => String(ob.points_to || "").startsWith("и") && ob.quote);
+  if (!md || !obs.length) return;
+  obs.forEach((ob) => {
+    const piece = String(ob.quote).split(/…|\.\.\./)
+      .map((s) => s.trim().replace(/^[«"„]+|[»"“]+$/g, ""))
+      .sort((a, b) => b.length - a.length)[0];
+    if (!piece || piece.length < 8) return;
+    const walker = document.createTreeWalker(md, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (node.parentNode.closest("mark, code, pre")) continue;
+      const at = node.data.indexOf(piece);
+      if (at < 0) continue;
+      const hit = node.splitText(at);
+      hit.splitText(piece.length);
+      const mark = document.createElement("mark");
+      mark.className = "ai-mark";
+      mark.title = String(ob.means || "");
+      hit.replaceWith(mark);
+      mark.appendChild(hit);
+      break;
+    }
   });
 }
 
@@ -621,7 +690,20 @@ function toolNode(call) {
 
 function pendingNode() {
   const el = messageNode({ role: "model", text: "" });
-  el.querySelector(".md").innerHTML = '<div class="typing"><i></i><i></i><i></i></div>';
+  el.querySelector(".md").innerHTML =
+    '<div class="typing"><i></i><i></i><i></i><span class="wait-time"></span></div>';
+  /* Шлюз молчит, пока модель не выдаст первое слово, а на длинном запросе
+     это минуты. Без счётчика это выглядит как зависание. */
+  const started = Date.now();
+  const timer = setInterval(() => {
+    const label = el.querySelector(".wait-time");
+    if (!el.isConnected || !label) { clearInterval(timer); return; }
+    const sec = Math.floor((Date.now() - started) / 1000);
+    if (sec < 10) return;
+    const clock = Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+    label.textContent = "жду ответ · " + clock +
+      (sec >= 90 ? " — долго; шлюз может оборвать запрос" : "");
+  }, 1000);
   return el;
 }
 
@@ -773,6 +855,7 @@ async function ensureChat() {
 
 const COMMANDS = [
   ["/human", "переписать текст живым языком"],
+  ["/check", "проверить текст детектором, не переписывая"],
   ["/compact", "свернуть разговор в сводку"],
 ];
 
@@ -839,6 +922,25 @@ async function send(text) {
   S.attach = [];
   renderAttach();
 
+  beginTurn(text, shots);
+  const res = await api().send(S.chat.id, text, shots);
+  if (!res || !res.ok) {
+    finishWithError((res && res.error) || "Не удалось отправить");
+  }
+}
+
+async function rewriteAgain(ts) {
+  if (S.busy || !S.chat) return;
+  beginTurn("/human — ещё раз, по замечаниям проверки", []);
+  const res = await api().rewrite_again(S.chat.id, ts);
+  if (!res || !res.ok) {
+    finishWithError((res && res.error) || "Не удалось отправить");
+  }
+}
+
+/* Сообщение человека и заглушка ответа на экране — до того, как Python
+   что-то ответил: окно не должно ждать сети, чтобы показать нажатое. */
+function beginTurn(text, shots) {
   const thread = $("thread");
   const userNode = messageNode({ role: "user", text, images: shots });
   userNode.classList.add("enter");
@@ -852,11 +954,6 @@ async function send(text) {
   S.buf = "";
   S.thoughtBuf = "";
   document.body.classList.add("busy");
-
-  const res = await api().send(S.chat.id, text, shots);
-  if (!res || !res.ok) {
-    finishWithError((res && res.error) || "Не удалось отправить");
-  }
 }
 
 async function regenerate() {
@@ -868,10 +965,19 @@ async function regenerate() {
 /* Пока идёт работа, в заголовке свёрнутого блока виден текущий шаг:
    чтобы понять, чем занята модель, разворачивать его не надо. */
 function setThoughtTitle(details, buf) {
-  const lines = buf.split("\n").map((s) => s.trim()).filter(Boolean);
-  const last = lines[lines.length - 1] || "Размышления";
+  // Настоящие мысли модели идут блоками с заголовком «**Что делаю**» — он и
+  // есть лучшая подпись. Нет заголовков — берём последнюю строку.
+  const heads = [...buf.matchAll(/\*\*([^*\n]+)\*\*/g)];
+  const lines = thoughtText(buf).split("\n").map((s) => s.trim()).filter(Boolean);
+  const last = (heads.length ? heads[heads.length - 1][1].trim() : lines[lines.length - 1])
+    || "Размышления";
   const title = details.querySelector(".thought-title");
   if (title) title.textContent = last.length > 60 ? last.slice(0, 60) + "…" : last;
+}
+
+/* Звёздочки разметки в мыслях не рендерим — блок показывается простым текстом. */
+function thoughtText(s) {
+  return String(s || "").replace(/\*\*([^*\n]+)\*\*/g, "$1");
 }
 
 function finishWithError(text) {
@@ -934,7 +1040,7 @@ window.__ev = function (payload) {
       const th = S.node.querySelector(".thoughts");
       th.hidden = false;
       th.classList.add("live");
-      th.querySelector(".thought-text").textContent = S.thoughtBuf;
+      th.querySelector(".thought-text").textContent = thoughtText(S.thoughtBuf);
       setThoughtTitle(th, S.thoughtBuf);
       toBottom(false);
       break;
@@ -1013,7 +1119,9 @@ window.__ev = function (payload) {
       break;
 
     case "check_done": {
-      showCheck(lastModelBox(), ev.check);
+      const box = lastModelBox();
+      showCheck(box, ev.check, ev.ts);
+      if (box) markQuotes(box.parentNode.querySelector(".md"), ev.check);
       const msgs = (S.chat && S.chat.messages) || [];
       for (let k = msgs.length - 1; k >= 0; k--) {
         if (msgs[k].role === "model") { msgs[k].check = ev.check; break; }
@@ -1653,6 +1761,7 @@ function bindUi() {
 
   // отчёт об ошибке и страница помощников
   $("btnReportSettings").onclick = () => openReport({ model: S.settings.model });
+  $("btnExportAll").onclick = exportAll;
   $("btnCloseReport").onclick = () => $("reportOverlay").classList.remove("open");
   $("reportOverlay").addEventListener("click", (e) => {
     if (e.target === $("reportOverlay")) $("reportOverlay").classList.remove("open");

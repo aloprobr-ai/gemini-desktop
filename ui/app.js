@@ -857,6 +857,7 @@ const COMMANDS = [
   ["/human", "переписать текст живым языком"],
   ["/check", "проверить текст детектором, не переписывая"],
   ["/compact", "свернуть разговор в сводку"],
+  ["/agy", "промт agy на шлюзе: on | off [all | ключи]"],
 ];
 
 /* Черта, ниже которой начинается то, что модель ещё видит. Всё выше
@@ -1476,6 +1477,21 @@ function showKeyState() {
     ? "Ключ сохранён и не показывается. Введите новый, чтобы заменить."
     : "Ключ хранится только на этом компьютере и в интерфейсе не отображается.";
   $("btnClearKey").style.display = keyIsSet() ? "" : "none";
+  showGatewayTokenState();
+}
+
+/* Токен управления шлюзом — тот же секрет, что у страницы /keys. Нужен
+   только /agy для чужих ключей и «all»; хранится так же, как API-ключ. */
+function showGatewayTokenState() {
+  const set = !!S.settings.gatewayTokenSet;
+  const input = $("setGatewayToken");
+  input.value = "";
+  input.placeholder = set ? "токен сохранён" : "admin.token из config.php шлюза";
+  $("gatewayTokenHint").textContent = set
+    ? "Сохранён и не показывается. /agy с ним меняет промт agy для всех ключей и для чужих."
+    : "Необязательно. Без него /agy меняет промт agy только для своего ключа.";
+  $("btnClearGatewayToken").style.display = set ? "" : "none";
+  $("fieldGatewayToken").style.display = $("setProvider").value === "google" ? "none" : "";
 }
 
 async function saveSettings() {
@@ -1495,6 +1511,8 @@ async function saveSettings() {
   };
   const key = $("setApiKey").value.trim();
   if (key) { if (provider === "google") patch.googleKey = key; else patch.apiKey = key; }
+  const adminToken = $("setGatewayToken").value.trim();
+  if (adminToken) patch.gatewayToken = adminToken;
 
   S.settings = await api().save_settings(patch);
   updateToolsChip();
@@ -1822,6 +1840,11 @@ function bindUi() {
     S.settings = await api().clear_key(which);
     showKeyState();
     toast("Ключ удалён");
+  };
+  $("btnClearGatewayToken").onclick = async () => {
+    S.settings = await api().clear_key("gatewayToken");
+    showGatewayTokenState();
+    toast("Токен управления удалён");
   };
   $("btnTest").onclick = async () => {
     const out = $("testResult");

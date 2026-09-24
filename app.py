@@ -40,7 +40,7 @@ from detector.model import Model as DetectModel
 from detector.text import Doc
 
 APP_NAME = "Gemini Desktop"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 # Откуда берутся обновления: выпуски GitHub. Нужен публичный репозиторий —
 # у закрытого тот же адрес отвечает 404, и проверка молча ничего не находит.
@@ -828,7 +828,7 @@ BOOT_LOG = os.path.join(DATA_DIR, "boot.log")
 _boot_lock = threading.Lock()
 
 
-SECRET_FIELDS = ("apiKey", "googleKey")
+SECRET_FIELDS = ("apiKey", "googleKey", "gatewayToken")
 _secrets = set()
 _secrets_lock = threading.Lock()
 
@@ -1497,7 +1497,77 @@ COMMANDS = {
     "/human": "Переписать текст живым языком",
     "/check": "Проверить текст детектором, ничего не переписывая",
     "/compact": "Свернуть разговор в сводку",
+    "/agy": "Промт agy на шлюзе: /agy on|off [all | имена ключей]",
 }
+
+# /agy: что человек пишет -> что понимает шлюз (/v1/agy-prompt).
+AGY_MODES = {
+    "on": "on", "вкл": "on", "включить": "on",
+    "off": "off", "выкл": "off", "выключить": "off",
+    "default": "default", "сброс": "default", "reset": "default",
+}
+AGY_MODE_TEXT = {"on": "идёт как есть", "off": "вырезается", "default": "как у всех"}
+AGY_USAGE = ("`/agy` — что сейчас; `/agy off` / `/agy on` — для своего ключа; "
+             "`/agy off all` — для всех; `/agy off имя1 имя2` — для этих ключей; "
+             "`/agy default имя` — ключ снова как у всех. Чужие ключи и «all» — "
+             "с токеном управления шлюзом из настроек.")
+
+
+def agy_args(rest):
+    """«off all» -> ("off", "all"); «on стёпа, desktop» -> ("on", [...]).
+
+    Без режима — просто узнать, что сейчас: (None, None). Имена ключей —
+    те, что на странице /keys шлюза. Ошибка — строкой вместо кортежа.
+    """
+    words = [w for w in re.split(r"[\s,;]+", (rest or "").strip()) if w]
+    if not words:
+        return None, None
+    mode = AGY_MODES.get(words[0].lower())
+    if mode is None:
+        return "Не понял «%s». %s" % (words[0], AGY_USAGE)
+    names = words[1:]
+    if not names:
+        return mode, None
+    if any(n.lower() in ("all", "все", "всех") for n in names):
+        if len(names) > 1:
+            return "«all» — это все ключи сразу, имена рядом с ним не нужны."
+        if mode == "default":
+            return "Для всех ключей — только on или off."
+        return mode, "all"
+    return mode, names
+
+
+def agy_report(data, mode=None, keys=None):
+    """Ответ шлюза /v1/agy-prompt -> текст для окна."""
+    lines = []
+    if mode:
+        who = ("всех ключей" if keys == "all"
+               else ("ключей: " + ", ".join(keys)) if keys else "этого ключа")
+        lines.append("Готово: промт agy для %s — %s." % (who, AGY_MODE_TEXT[mode]))
+        lines.append("")
+    me = data.get("self") or {}
+    own = me.get("agy_prompt")
+    lines.append("**Промт agy**")
+    lines.append("")
+    lines.append("- этот ключ (%s): %s%s" % (
+        me.get("name") or "—", AGY_MODE_TEXT.get(me.get("effective"), "—"),
+        " — общее значение" if own == "default" else " — своё значение"))
+    lines.append("- для всех ключей: %s" % AGY_MODE_TEXT.get(data.get("all"), "—"))
+    rows = data.get("keys")
+    if rows:
+        lines.append("")
+        lines.append("| Ключ | Промт agy | Откуда |")
+        lines.append("|---|---|---|")
+        for r in rows:
+            lines.append("| %s | %s | %s |" % (
+                (r.get("name") or "—").replace("|", "/"),
+                AGY_MODE_TEXT.get(r.get("effective"), "—"),
+                "общее" if r.get("agy_prompt") == "default" else "своё"))
+    if not data.get("interceptor"):
+        lines.append("")
+        lines.append("На шлюзе нет перехватчика (deploy/agy-mitm), поэтому промт agy "
+                     "выключить нельзя — он всегда идёт как есть.")
+    return "\n".join(lines)
 
 # Разметка картинки: ![имя](ссылка). Шлюз подклеивает ею то, что CLI нарисовал.
 IMAGE_LINK = re.compile(r"!\[[^\]]*\]\([^)]*\)[ \t]*\n?")
@@ -1922,6 +1992,36 @@ class OpenAIBackend:
             "Accept": "text/event-stream",
             "X-Session-Id": uuid.uuid4().hex,
         }
+
+    def agy_prompt(self, mode=None, keys=None, admin_token=""):
+        """Выключатель промта agy на шлюзе: без mode — узнать, что сейчас.
+
+        Токен управления шлюзом шлётся всегда, когда задан: с ним ответ
+        несёт и список всех ключей. Ошибку шлюза отдаём его же словами.
+        """
+        headers = {"Authorization": "Bearer " + self.key}
+        if (admin_token or "").strip():
+            headers["X-Admin-Token"] = admin_token.strip()
+        data = None
+        if mode:
+            body = {"agy_prompt": mode}
+            if keys:
+                body["keys"] = keys
+            data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            headers["Content-Type"] = "application/json; charset=utf-8"
+        req = urllib.request.Request(self.base + "/agy-prompt", data=data, headers=headers,
+                                     method="POST" if mode else "GET")
+        try:
+            with build_opener(self.s.get("proxy")).open(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                msg = json.loads(exc.read().decode("utf-8"))["error"]["message"]
+            except Exception:
+                msg = ""
+            if exc.code == 404 and not msg.startswith("Unknown keys"):
+                msg = "шлюз не знает /agy-prompt — обновите шлюз"
+            raise RuntimeError("HTTP %d: %s" % (exc.code, msg or exc.reason))
 
     def usage(self):
         req = urllib.request.Request(self.base + "/usage", headers={
@@ -2465,7 +2565,7 @@ class Api:
 
     def clear_key(self, which):
         """Стереть ключ можно только явной кнопкой в настройках."""
-        name = "googleKey" if which == "google" else "apiKey"
+        name = {"google": "googleKey", "gatewayToken": "gatewayToken"}.get(which, "apiKey")
         self.settings[name] = ""
         write_json(SETTINGS_PATH, self.settings)
         remember_secrets(self.settings)
@@ -2960,7 +3060,9 @@ class Api:
             self.emit({"type": "title", "chatId": chat_id, "title": chat["title"]})
         chat["updatedAt"] = now_ms()
         self._persist_chat(chat)
-        if entry.get("local"):
+        if entry.get("cmd") == "agy":
+            self._start_agy(chat, entry["target"])
+        elif entry.get("local"):
             self._start_check(chat, entry["target"])
         else:
             threading.Thread(target=self._generate, args=(chat_id,), daemon=True).start()
@@ -2983,6 +3085,34 @@ class Api:
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _start_agy(self, chat, rest):
+        """Ответ на /agy — от шлюза, а не от модели; модель о нём не узнаёт.
+
+        Сообщение появляется, когда шлюз ответил: это секунда-другая, и всё
+        это время в окне видны точки ожидания, как у обычного ответа.
+        """
+        def work():
+            message = {"role": "model", "text": "", "kind": "agy", "local": True,
+                       "ts": now_ms(), "model": chat.get("model") or self.settings["model"]}
+            parsed = agy_args(rest)
+            try:
+                if isinstance(parsed, str):
+                    raise ValueError(parsed)
+                mode, keys = parsed
+                data = OpenAIBackend(self.settings).agy_prompt(
+                    mode, keys, self.settings.get("gatewayToken") or "")
+                message["text"] = agy_report(data, mode, keys)
+            except ValueError as exc:
+                message["error"] = str(exc)
+            except Exception as exc:
+                message["error"] = "Шлюз не переключил промт agy. " + exc_text(exc)
+            chat["messages"].append(message)
+            chat["updatedAt"] = now_ms()
+            self._persist_chat(chat)
+            self.emit({"type": "done", "chatId": chat["id"], "message": message})
+
+        threading.Thread(target=work, daemon=True).start()
+
     def regenerate(self, chat_id):
         chat = self._find(chat_id)
         if not chat or chat_id in self.busy:
@@ -2995,7 +3125,9 @@ class Api:
         self._persist_chat(chat)
         self.emit({"type": "reload", "chatId": chat_id})
         asked = chat["messages"][-1]
-        if asked.get("local"):
+        if asked.get("cmd") == "agy":
+            self._start_agy(chat, asked.get("target") or "")
+        elif asked.get("local"):
             # для /check «ещё раз» — это ещё одна проверка того же текста
             self._start_check(chat, asked.get("target") or "")
         else:
@@ -3039,6 +3171,15 @@ class Api:
                 return {"error": "После /check нужен текст — или хотя бы один ответ в чате"}
             return {"kind": "check", "local": True, "target": target,
                     "title": "Проверка: " + target[:38]}
+
+        if name == "/agy":
+            if (getattr(self, "settings", None) or {}).get("provider") == "google":
+                return {"error": "/agy — для шлюза agy, а сейчас подключение к Google Gemini API"}
+            parsed = agy_args(rest)
+            if isinstance(parsed, str):
+                return {"error": parsed}
+            return {"kind": "agy", "local": True, "target": rest,
+                    "title": ("/agy " + rest).strip()}
 
         # /compact: сворачивать пустоту нечестно — получится сводка ни о чём.
         if not any(m["role"] == "model" and (m.get("text") or "").strip()

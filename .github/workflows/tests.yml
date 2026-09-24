@@ -32,3 +32,6 @@ jobs:
 
       - name: /check, второй заход и выгрузка
         run: python tests/test_check_export.py
+
+      - name: /agy — выключатель промта agy на шлюзе
+        run: python tests/test_agy_cmd.py

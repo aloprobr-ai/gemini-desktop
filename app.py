@@ -40,7 +40,7 @@ from detector.model import Model as DetectModel
 from detector.text import Doc
 
 APP_NAME = "Gemini Desktop"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 
 # Обновления берутся из выпусков GitHub. Репозиторий должен быть публичным,
 # у закрытого API отвечает 404 и обновлений не видно.

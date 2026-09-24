@@ -505,11 +505,11 @@ function showCheck(box, check, ts) {
   }
   if (j && j.runs > 1) {
     rows.push("Разброс между заходами " + pct(j.spread) +
-              (j.spread >= 0.2 ? " — широковато, среднему тут веры мало." : "."));
+              (j.spread >= 0.2 ? ": большой, среднему значению доверять не стоит." : "."));
   }
   if (j && j.failed) rows.push("Не ответили: " + j.failed + ".");
-  if (check.disagree) rows.push("Признаки и модель разошлись — читайте текст сами.");
-  if (check.short) rows.push("Текст короткий: на такой длине числам верить нельзя.");
+  if (check.disagree) rows.push("Оценки по признакам и по модели не совпадают.");
+  if (check.short) rows.push("Текст слишком короткий для надёжной оценки.");
   if (check.judgeError) rows.push("Модель не ответила: " + check.judgeError);
   if (j && j.summary) rows.push(j.summary);
 
@@ -702,7 +702,7 @@ function pendingNode() {
     if (sec < 10) return;
     const clock = Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
     label.textContent = "жду ответ · " + clock +
-      (sec >= 90 ? " — долго; шлюз может оборвать запрос" : "");
+      (sec >= 90 ? ", шлюз может прервать долгий запрос" : "");
   }, 1000);
   return el;
 }
@@ -857,7 +857,7 @@ const COMMANDS = [
   ["/human", "переписать текст живым языком"],
   ["/check", "проверить текст детектором, не переписывая"],
   ["/compact", "свернуть разговор в сводку"],
-  ["/agy", "промт agy на шлюзе: on | off [all | ключи]"],
+  ["/agy", "промт agy на шлюзе: on | off"],
 ];
 
 /* Черта, ниже которой начинается то, что модель ещё видит. Всё выше
@@ -865,7 +865,7 @@ const COMMANDS = [
 function compactDivider() {
   const el = document.createElement("div");
   el.className = "compact-line";
-  el.innerHTML = "<span>Свёрнуто — выше модель не видит</span>";
+  el.innerHTML = "<span>Свёрнуто: сообщения выше модель не видит</span>";
   return el;
 }
 
@@ -875,7 +875,8 @@ function commandMatches() {
   const m = /^\/([a-zA-Zа-яА-Я]*)$/.exec($("input").value.trim());
   if (!m) return [];
   const pre = ("/" + m[1]).toLowerCase();
-  return COMMANDS.filter((c) => c[0].startsWith(pre));
+  // /agy есть, только если шлюз разрешил её этому ключу (agy-prompt на сервере).
+  return COMMANDS.filter((c) => c[0].startsWith(pre) && (c[0] !== "/agy" || S.agyAllowed));
 }
 
 function renderCommandHint() {
@@ -966,8 +967,8 @@ async function regenerate() {
 /* Пока идёт работа, в заголовке свёрнутого блока виден текущий шаг:
    чтобы понять, чем занята модель, разворачивать его не надо. */
 function setThoughtTitle(details, buf) {
-  // Настоящие мысли модели идут блоками с заголовком «**Что делаю**» — он и
-  // есть лучшая подпись. Нет заголовков — берём последнюю строку.
+  // Размышления модели идут блоками с заголовком «**Что делаю**», берём
+  // последний. Если заголовков нет, берём последнюю строку.
   const heads = [...buf.matchAll(/\*\*([^*\n]+)\*\*/g)];
   const lines = thoughtText(buf).split("\n").map((s) => s.trim()).filter(Boolean);
   const last = (heads.length ? heads[heads.length - 1][1].trim() : lines[lines.length - 1])
@@ -1115,6 +1116,11 @@ window.__ev = function (payload) {
     /* Проверка приходит уже после «done»: она ходит в сеть ещё несколько раз,
        и ответ всё это время висел бы недописанным. Поэтому рисуем её в том
        сообщении, которое к этому моменту уже на месте. */
+    /* Разрешение на /agy отозвали, пока окно было открыто. */
+    case "agy_allowed":
+      S.agyAllowed = !!ev.allowed;
+      break;
+
     case "check_start":
       showCheck(lastModelBox(), { pending: true, runs: ev.runs });
       break;
@@ -1255,9 +1261,8 @@ function showNewMark(on) {
 
 async function markModelsSeen() {
   if (!$("modelPicker").classList.contains("has-new")) return;
-  // Гасим только точку в шапке. Пометки в самом списке оставляем видимыми —
-  // иначе они исчезали бы ровно в тот момент, когда список открывают.
-  // Пропадут при следующей загрузке: шлюзу уже сказано, что список посмотрели.
+  // Убираем только точку в шапке, пометки в списке остаются до следующей
+  // загрузки, иначе они пропадали бы в момент открытия списка.
   showNewMark(false);
   try { await api().mark_models_seen(); } catch (e) {}
 }
@@ -1306,6 +1311,7 @@ function renderLevelPicker() {
 }
 
 async function loadModels(notify) {
+  refreshAgy();          // параллельно: разрешение на /agy у того же шлюза
   const res = await api().list_models();
   if (res && res.models) S.models = res.models;
   if (res && res.groups) S.groups = res.groups;
@@ -1358,8 +1364,8 @@ async function fillOwnTools() {
   box.innerHTML = "";
 
   if (!tools.length) {
-    box.innerHTML = '<em class="hint">Пока ни одного. Модель создаёт их сама, ' +
-      "когда имеющихся не хватает — и каждый ждёт вашего разрешения.</em>";
+    box.innerHTML = '<em class="hint">Инструментов пока нет. Модель создаёт их, ' +
+      "когда встроенных не хватает; запускается каждый только после вашего разрешения.</em>";
     return;
   }
 
@@ -1446,7 +1452,7 @@ async function fillUsage() {
     .map((k) => k + " — " + u.models[k]).join(", ");
   html += '<div class="u-note">' +
     (top ? "Чаще всего: " + top + ". " : "") +
-    "Остаток квоты шлюз не показывает: Antigravity его не сообщает." +
+    "Остаток квоты шлюз не показывает." +
     "</div>";
 
   box.innerHTML = html;
@@ -1477,21 +1483,17 @@ function showKeyState() {
     ? "Ключ сохранён и не показывается. Введите новый, чтобы заменить."
     : "Ключ хранится только на этом компьютере и в интерфейсе не отображается.";
   $("btnClearKey").style.display = keyIsSet() ? "" : "none";
-  showGatewayTokenState();
 }
 
-/* Токен управления шлюзом — тот же секрет, что у страницы /keys. Нужен
-   только /agy для чужих ключей и «all»; хранится так же, как API-ключ. */
-function showGatewayTokenState() {
-  const set = !!S.settings.gatewayTokenSet;
-  const input = $("setGatewayToken");
-  input.value = "";
-  input.placeholder = set ? "токен сохранён" : "admin.token из config.php шлюза";
-  $("gatewayTokenHint").textContent = set
-    ? "Сохранён и не показывается. /agy с ним меняет промт agy для всех ключей и для чужих."
-    : "Необязательно. Без него /agy меняет промт agy только для своего ключа.";
-  $("btnClearGatewayToken").style.display = set ? "" : "none";
-  $("fieldGatewayToken").style.display = $("setProvider").value === "google" ? "none" : "";
+/* Разрешил ли шлюз этому ключу /agy. Спрашиваем вместе со списком моделей —
+   при запуске и после смены настроек; без разрешения команды в окне нет. */
+async function refreshAgy() {
+  try {
+    const res = await api().agy_status();
+    S.agyAllowed = !!(res && res.allowed);
+  } catch (e) {
+    S.agyAllowed = false;
+  }
 }
 
 async function saveSettings() {
@@ -1504,15 +1506,12 @@ async function saveSettings() {
     toolsEnabled: $("setToolsEnabled").checked,
     defaultDir: $("setDefaultDir").value.trim(),
     humanCheck: $("setHumanCheck").checked,
-    // 1..5: больше пяти заходов стоят денег и времени, а разброс к этому
-    // моменту уже виден. Меньше одного — это просто «выключить проверку».
+    // от 1 до 5; чтобы выключить проверку, есть отдельная галочка
     humanCheckRuns: Math.max(1, Math.min(5, parseInt($("setHumanRuns").value, 10) || 3)),
     detectModel: $("setDetectModel").value.trim(),
   };
   const key = $("setApiKey").value.trim();
   if (key) { if (provider === "google") patch.googleKey = key; else patch.apiKey = key; }
-  const adminToken = $("setGatewayToken").value.trim();
-  if (adminToken) patch.gatewayToken = adminToken;
 
   S.settings = await api().save_settings(patch);
   updateToolsChip();
@@ -1543,8 +1542,7 @@ function openReport(ctx) {
   $("repLog").checked = true;
   $("repAnswer").checked = false;
   $("repAnswerWrap").hidden = !(repCtx.answer || "").trim();
-  // Подпись помним между отчётами, а согласие — нет: галочку человек ставит
-  // каждый раз заново. Имя в открытом файле не должно появляться по привычке.
+  // Имя и ссылка запоминаются, а галочку нужно ставить каждый раз.
   $("repSign").checked = false;
   $("repName").value = S.settings.helperName || "";
   $("repLink").value = S.settings.helperLink || "";
@@ -1594,8 +1592,7 @@ async function sendReport() {
     $("repErr").textContent = (res && res.error) || "Не удалось открыть браузер";
     return;
   }
-  // Подпись запоминаем только после удачной отправки — иначе в настройках
-  // осело бы то, что человек набрал и передумал отправлять.
+  // подпись сохраняем только после отправки отчёта
   if (data.sign) {
     S.settings = await api().save_settings({
       helperName: data.name.trim(), helperLink: data.link.trim(),
@@ -1603,14 +1600,13 @@ async function sendReport() {
   }
   const copied = await copyText(res.text);
   $("reportOverlay").classList.remove("open");
-  // Текст подставлен в адрес, но обещать этого нельзя: у обычной учётной
-  // записи `?text=` слушается не всяким клиентом. Буфер — на этот случай.
+  // `?text=` поддерживают не все клиенты, поэтому отчёт есть и в буфере
   if (!copied) {
-    toast("Telegram открыт — расскажите в чате то же самое");
+    toast("Telegram открыт. Отчёт не скопировался, опишите проблему в чате");
   } else {
     toast(res.truncated
-      ? "Telegram открыт: в поле влезло начало, целиком отчёт в буфере"
-      : "Telegram открыт. Не подставилось — отчёт в буфере обмена");
+      ? "Telegram открыт. Полный отчёт в буфере обмена"
+      : "Telegram открыт. Отчёт в буфере обмена, вставьте его в чат");
   }
 }
 
@@ -1785,7 +1781,7 @@ function bindUi() {
     if (e.target === $("reportOverlay")) $("reportOverlay").classList.remove("open");
   });
   $("btnRepSend").onclick = sendReport;
-  // Человек начал дописывать — старая жалоба под кнопкой больше не про него.
+  // убираем старую ошибку, когда человек правит текст
   $("repWhat").oninput = () => { $("repErr").textContent = ""; };
   $("repName").oninput = () => { $("repErr").textContent = ""; };
   $("repSign").onchange = () => {
@@ -1819,7 +1815,7 @@ function bindUi() {
       return;
     }
     $("autostartHint").textContent = res.on
-      ? "Приложение будет стартовать вместе с Windows и ждать в трее."
+      ? "Приложение будет запускаться вместе с Windows, свёрнутым в трей."
       : "Автозапуск выключен.";
   };
 
@@ -1840,11 +1836,6 @@ function bindUi() {
     S.settings = await api().clear_key(which);
     showKeyState();
     toast("Ключ удалён");
-  };
-  $("btnClearGatewayToken").onclick = async () => {
-    S.settings = await api().clear_key("gatewayToken");
-    showGatewayTokenState();
-    toast("Токен управления удалён");
   };
   $("btnTest").onclick = async () => {
     const out = $("testResult");
@@ -1967,8 +1958,8 @@ setTimeout(hideSplash, SPLASH_MAX_MS);
 /* ------------------------------------------------ первый запуск */
 
 // Свой шлюз на этом же компьютере: agy-gateway по умолчанию слушает 8080.
-// Чужого адреса тут нет намеренно — приложение не должно ходить неизвестно
-// куда только потому, что так было удобно автору.
+// Внешнего адреса по умолчанию нет, чтобы приложение не обращалось к чужим
+// серверам без ведома пользователя.
 const LOCAL_GATEWAY = "http://127.0.0.1:8080/v1";
 
 const W = { page: 1, checking: false };
@@ -2067,8 +2058,7 @@ async function checkUpdate(byHand) {
   if (byHand) toast("Смотрю, есть ли обновление…");
   const res = await api().check_update();
   if (!res || !res.update || !res.url) {
-    // При запуске молчим: нет сети — не повод тревожить. А если человек
-    // нажал сам, ответить надо обязательно, иначе кнопка выглядит сломанной.
+    // при автопроверке ничего не показываем, при нажатии кнопки отвечаем всегда
     if (byHand) toast(res && res.error ? "Не удалось проверить обновление" : "У вас последняя версия");
     return;
   }
@@ -2076,7 +2066,7 @@ async function checkUpdate(byHand) {
   $("updFrom").textContent = res.current || "";
   $("updTo").textContent = res.version || "";
   $("updImp").hidden = !res.important;
-  $("updNotes").textContent = res.notes || "Что изменилось — автор не написал.";
+  $("updNotes").textContent = res.notes || "Описания изменений нет.";
   $("updErr").textContent = "";
   $("updBar").hidden = true;
   $("updBar").querySelector("i").style.width = "0%";

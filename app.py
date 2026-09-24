@@ -31,7 +31,7 @@ import webbrowser
 
 import webview
 
-# Детектор ИИ-текста лежит рядом целиком — см. detector/__init__.py.
+# Детектор ИИ-текста, копия проекта ai-detector, см. detector/__init__.py.
 from detector.features import extract as detect_features
 from detector.judge import SYSTEM as JUDGE_SYSTEM
 from detector.judge import TASK as JUDGE_TASK
@@ -42,37 +42,30 @@ from detector.text import Doc
 APP_NAME = "Gemini Desktop"
 APP_VERSION = "1.2.0"
 
-# Откуда берутся обновления: выпуски GitHub. Нужен публичный репозиторий —
-# у закрытого тот же адрес отвечает 404, и проверка молча ничего не находит.
+# Обновления берутся из выпусков GitHub. Репозиторий должен быть публичным,
+# у закрытого API отвечает 404 и обновлений не видно.
 GITHUB_REPO = "aloprobr-ai/gemini-desktop"
 GITHUB_API = "https://api.github.com"
 
-# Отчёты об ошибках. Токен в программу не зашит и зашит не будет: исходник
-# открыт, а значит любой ключ из него достанут и разошлют им что угодно.
-# Поэтому отчёт отправляет сам человек — из браузера, своей учётной записью.
+# Отчёты об ошибках. Токена в программе нет, исходник открытый и токен
+# из него могли бы использовать посторонние. Отчёт отправляет сам человек
+# из Telegram, в личный чат с автором. Задачи на GitHub не создаются:
+# в отчёте может быть описано, как сломать программу.
 #
-# Путь один, и он закрытый: личный разговор в Telegram. Открытой задачи тут
-# нет намеренно — в отчёте об ошибке нередко описано, как программу сломать,
-# а открытая задача превращает такое описание в готовую инструкцию для
-# любого, кто её прочтёт. Выбора «куда» тоже нет: он перекладывал бы эту
-# оценку на человека, который пришёл пожаловаться на белое окно.
-#
-# Текст пробуем подставить в поле ввода: t.me/<ник>?text=... У ботов это
-# работает наверняка, у обычных учётных записей — как повезёт с клиентом,
-# Telegram такого не обещает. Поэтому отчёт всё равно кладётся в буфер
-# обмена: подставилось — хорошо, нет — остаётся вставить руками.
+# Текст подставляется в поле ввода через t.me/<ник>?text=..., но для обычных
+# учётных записей это работает не во всех клиентах. Поэтому отчёт ещё
+# и копируется в буфер обмена.
 REPORT_URL = "https://t.me/lisemicki"
 
-# В адрес влезает не всё, да и клиент длинный хвост обрежет молча.
-# В ссылку идёт начало, в буфер — отчёт целиком.
+# Длинный адрес клиент обрежет. В ссылку идёт начало отчёта, в буфер весь.
 REPORT_TEXT_LIMIT = 2000
 
-# Кто помогал проекту. Файл лежит в корне репозитория и открыт всем.
+# Список помощников в корне репозитория.
 HELPERS_URL = "https://github.com/%s/blob/main/Helpers.md" % GITHUB_REPO
 
-# Запасной путь: свой шлюз с /up. Задаётся ключом "updateUrl" в settings.json
-# и в окне настроек не показывается — это на случай, когда GitHub недоступен
-# или сборки раздаются внутри организации.
+# Другой источник обновлений (шлюз с /up): ключ "updateUrl" в settings.json.
+# В окне настроек его нет. Нужен, если GitHub недоступен или сборки
+# раздаются внутри организации.
 TOAST_APP_ID = "GeminiDesktop.App"
 TOAST_APP_LABEL = "Gemini"   # так подписаны уведомления
 AUTOSTART_NAME = "GeminiDesktop"
@@ -184,12 +177,11 @@ DEFAULT_SETTINGS = {
     "defaultDir": "",
     "proxy": "",
     "theme": "dark",
-    # /human переписывает текст живым языком — а проверка смотрит, получилось ли.
+    # проверка текста после /human
     "humanCheck": True,
     "humanCheckRuns": 3,
     "detectModel": "",     # пусто — судить будет DETECT_MODEL
-    # Чем подписать строку в Helpers.md. Хранится, чтобы не набирать заново,
-    # но само по себе никуда не уходит: только с галочкой в окне отчёта.
+    # Подпись для Helpers.md. Отправляется только с галочкой в окне отчёта.
     "helperSign": False,
     "helperName": "",
     "helperLink": "",
@@ -603,11 +595,11 @@ def check_update_github(current=APP_VERSION):
         elif name.endswith(".sha256") or name == "sha256sums":
             sums = asset
     if not version or msi is None:
-        # Выпуск есть, а установщика к нему не приложили — обновлять нечем.
+        # в выпуске нет установщика
         return {"update": False, "current": current, "version": version}
 
-    # Метку порядка байтов в начале текста GitHub сохраняет как есть — видел
-    # такое у чужих выпусков. Без неё первое слово не совпало бы ни с чем.
+    # GitHub сохраняет BOM в начале текста, убираем его, иначе первое слово
+    # не распознаётся.
     notes = str(rel.get("body") or "").lstrip("﻿").strip()
     important = False
     if notes.lower().startswith("[важно]"):
@@ -701,8 +693,8 @@ def download_update(url, sha256, on_progress=None):
     except Exception as exc:
         return {"ok": False, "error": exc_text(exc)}
 
-    # Сумму сверяем, если она есть: файл после этого запускается с правами
-    # пользователя, и подменённый по дороге установщик — худшее, что может быть.
+    # Сверяем контрольную сумму, если она есть: установщик потом запускается,
+    # и подменённый файл выполнится с правами пользователя.
     if sha256 and digest.hexdigest().lower() != str(sha256).lower():
         try:
             os.remove(target)
@@ -828,7 +820,7 @@ BOOT_LOG = os.path.join(DATA_DIR, "boot.log")
 _boot_lock = threading.Lock()
 
 
-SECRET_FIELDS = ("apiKey", "googleKey", "gatewayToken")
+SECRET_FIELDS = ("apiKey", "googleKey")
 _secrets = set()
 _secrets_lock = threading.Lock()
 
@@ -931,6 +923,42 @@ def resolve_dir(raw, settings):
     return os.path.join(settings.get("defaultDir") or downloads_dir(), expanded)
 
 
+def in_data_dir(path):
+    """Путь ведёт в папку программы: настройки с ключами, чаты, инструменты.
+
+    Инструменты модели туда не пускаем. Иначе модель могла бы сама поставить
+    своему инструменту approved: true или подменить updateUrl и proxy.
+    Сравниваем и по строке пути, и по самому каталогу: до той же папки можно
+    дойти через короткое имя, \\\\?\\ или \\\\localhost\\c$.
+    """
+    try:
+        root = os.path.normcase(os.path.realpath(DATA_DIR))
+        full = os.path.normcase(os.path.realpath(os.path.abspath(path)))
+    except (OSError, ValueError):
+        return True
+    if full == root or full.startswith(root.rstrip("\\/") + os.sep):
+        return True
+    try:
+        root_st = os.stat(DATA_DIR)
+    except OSError:
+        return False
+    cur = os.path.abspath(path)
+    while True:
+        try:
+            if os.path.samestat(os.stat(cur), root_st):
+                return True
+        except (OSError, ValueError):
+            pass
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return False
+        cur = parent
+
+
+DATA_DIR_DENIED = ("Это служебная папка Gemini Desktop (настройки, чаты, "
+                   "инструменты). Инструментам модели доступ к ней закрыт.")
+
+
 def unique_path(path):
     if not os.path.exists(path):
         return path
@@ -950,6 +978,8 @@ def tool_create_file(args, settings):
         content = json.dumps(content, ensure_ascii=False, indent=2)
     mode = str(args.get("mode") or "create").lower()
     directory = resolve_dir(args.get("directory"), settings)
+    if in_data_dir(directory) or in_data_dir(os.path.join(directory, filename)):
+        return {"status": "error", "error": DATA_DIR_DENIED}
 
     try:
         os.makedirs(directory, exist_ok=True)
@@ -998,6 +1028,8 @@ def tool_read_file(args, settings):
     path = resolve_file_path(args.get("path"), settings, args.get("directory"))
     if not path:
         return {"status": "error", "error": "Не указан путь к файлу"}
+    if in_data_dir(path):
+        return {"status": "error", "error": DATA_DIR_DENIED}
     if not os.path.isfile(path):
         return {"status": "error", "error": "Файл не найден: %s" % path}
 
@@ -1230,7 +1262,7 @@ TOOL_IMPL = {
     "create_tool": tool_create_tool,
     "read_file": tool_read_file,
     "open_folder": tool_open_folder,
-    # как называлось раньше — старые чаты и привыкшие модели не должны ломаться
+    # старое имя, для совместимости со старыми чатами
     "create_txt_file": tool_create_file,
 }
 
@@ -1323,9 +1355,8 @@ def _http_error_text(exc):
         msg = err.get("message") or raw
     except Exception:
         msg = None
-    # nginx на шлюзе заворачивает свою 502 на страницу ошибки, и запрос
-    # возвращается в шлюз уже как GET — тот честно отвечает «Unknown endpoint».
-    # Человеку это ничего не говорит: на деле шлюз оборвал ответ, не дождавшись.
+    # При 502 nginx перенаправляет запрос на страницу ошибки как GET, и шлюз
+    # отвечает «Unknown endpoint». На самом деле шлюз не дождался модели.
     if exc.code == 502 and (msg is None or "Unknown endpoint" in str(msg)):
         return ("HTTP 502: шлюз оборвал ответ, не дождавшись модели. Обычно так "
                 "бывает, когда ответ готовится слишком долго. Попробуйте ещё раз "
@@ -1497,81 +1528,38 @@ COMMANDS = {
     "/human": "Переписать текст живым языком",
     "/check": "Проверить текст детектором, ничего не переписывая",
     "/compact": "Свернуть разговор в сводку",
-    "/agy": "Промт agy на шлюзе: /agy on|off [all | имена ключей]",
+    "/agy": "Промт agy на шлюзе: /agy on | off (если шлюз разрешил)",
 }
 
-# /agy: что человек пишет -> что понимает шлюз (/v1/agy-prompt).
+# /agy: что человек пишет -> что понимает шлюз (/v1/agy-prompt). Команда есть,
+# только если хозяин шлюза разрешил её этому ключу (agy-prompt на сервере).
 AGY_MODES = {
     "on": "on", "вкл": "on", "включить": "on",
     "off": "off", "выкл": "off", "выключить": "off",
-    "default": "default", "сброс": "default", "reset": "default",
 }
-AGY_MODE_TEXT = {"on": "идёт как есть", "off": "вырезается", "default": "как у всех"}
-AGY_USAGE = ("`/agy` — что сейчас; `/agy off` / `/agy on` — для своего ключа; "
-             "`/agy off all` — для всех; `/agy off имя1 имя2` — для этих ключей; "
-             "`/agy default имя` — ключ снова как у всех. Чужие ключи и «all» — "
-             "с токеном управления шлюзом из настроек.")
+AGY_USAGE = "`/agy` — что сейчас, `/agy off` — вырезать промт agy, `/agy on` — вернуть."
 
 
 def agy_args(rest):
-    """«off all» -> ("off", "all"); «on стёпа, desktop» -> ("on", [...]).
-
-    Без режима — просто узнать, что сейчас: (None, None). Имена ключей —
-    те, что на странице /keys шлюза. Ошибка — строкой вместо кортежа.
-    """
-    words = [w for w in re.split(r"[\s,;]+", (rest or "").strip()) if w]
+    """«off» -> "off"; пусто -> None (узнать, что сейчас); иначе — текст ошибки."""
+    words = (rest or "").split()
     if not words:
-        return None, None
+        return None
     mode = AGY_MODES.get(words[0].lower())
-    if mode is None:
-        return "Не понял «%s». %s" % (words[0], AGY_USAGE)
-    names = words[1:]
-    if not names:
-        return mode, None
-    if any(n.lower() in ("all", "все", "всех") for n in names):
-        if len(names) > 1:
-            return "«all» — это все ключи сразу, имена рядом с ним не нужны."
-        if mode == "default":
-            return "Для всех ключей — только on или off."
-        return mode, "all"
-    return mode, names
+    if mode is None or len(words) > 1:
+        return {"error": "Не понял «%s». %s" % ((rest or "").strip(), AGY_USAGE)}
+    return mode
 
 
-def agy_report(data, mode=None, keys=None):
+def agy_report(data, mode=None):
     """Ответ шлюза /v1/agy-prompt -> текст для окна."""
-    lines = []
+    now = "вырезается" if data.get("agy_prompt") == "off" else "идёт как есть"
     if mode:
-        who = ("всех ключей" if keys == "all"
-               else ("ключей: " + ", ".join(keys)) if keys else "этого ключа")
-        lines.append("Готово: промт agy для %s — %s." % (who, AGY_MODE_TEXT[mode]))
-        lines.append("")
-    me = data.get("self") or {}
-    own = me.get("agy_prompt")
-    lines.append("**Промт agy**")
-    lines.append("")
-    lines.append("- этот ключ (%s): %s%s" % (
-        me.get("name") or "—", AGY_MODE_TEXT.get(me.get("effective"), "—"),
-        " — общее значение" if own == "default" else " — своё значение"))
-    lines.append("- для всех ключей: %s" % AGY_MODE_TEXT.get(data.get("all"), "—"))
-    rows = data.get("keys")
-    if rows:
-        lines.append("")
-        lines.append("| Ключ | Промт agy | Откуда |")
-        lines.append("|---|---|---|")
-        for r in rows:
-            lines.append("| %s | %s | %s |" % (
-                (r.get("name") or "—").replace("|", "/"),
-                AGY_MODE_TEXT.get(r.get("effective"), "—"),
-                "общее" if r.get("agy_prompt") == "default" else "своё"))
-    if not data.get("interceptor"):
-        lines.append("")
-        lines.append("На шлюзе нет перехватчика (deploy/agy-mitm), поэтому промт agy "
-                     "выключить нельзя — он всегда идёт как есть.")
-    return "\n".join(lines)
+        return "Готово: промт agy теперь %s." % now
+    return "Промт agy сейчас %s. %s" % (now, AGY_USAGE)
 
 # Разметка картинки: ![имя](ссылка). Шлюз подклеивает ею то, что CLI нарисовал.
 IMAGE_LINK = re.compile(r"!\[[^\]]*\]\([^)]*\)[ \t]*\n?")
-
 
 def visible_history(chat):
     """Сообщения, которые реально уходят модели.
@@ -1639,16 +1627,15 @@ def sent_text(msg):
 # шире, чем различаются сами тексты, и три захода тогда меряют не текст.
 DETECT_MODEL = "gemini-3.1-pro-high"
 
-# Ниже этой длины счёт — гадание. Половина признаков считается по разбросу
-# длин предложений, а на пяти предложениях разброса ещё нет.
+# На более коротком тексте оценка ненадёжна: половина признаков считается
+# по разбросу длин предложений.
 DETECT_MIN_WORDS = 60
 
-# Дальше судья всё равно читает по диагонали, а запрос дорожает.
+# Длиннее не отправляем: запрос дорожает, а оценка не улучшается.
 DETECT_MAX_CHARS = 20000
 
-# Хвост ответа /human — служебный: метки «нужна деталь», отчёт о вырезанном
-# и три переписанные фразы. Судить надо сам текст: иначе детектор читает
-# отчёт редактора и справедливо находит в нём машинный почерк.
+# Служебная часть в конце ответа /human (метки «нужна деталь», список
+# убранного, примеры фраз). Её отрезаем, проверяется только сам текст.
 HUMAN_TAIL = re.compile(r"^\s*(?:\*\*|#+\s*)?нужны\s+детали", re.I | re.M)
 
 
@@ -1993,21 +1980,16 @@ class OpenAIBackend:
             "X-Session-Id": uuid.uuid4().hex,
         }
 
-    def agy_prompt(self, mode=None, keys=None, admin_token=""):
-        """Выключатель промта agy на шлюзе: без mode — узнать, что сейчас.
+    def agy_prompt(self, mode=None):
+        """Промт agy на шлюзе для своего ключа: без mode — узнать, что сейчас.
 
-        Токен управления шлюзом шлётся всегда, когда задан: с ним ответ
-        несёт и список всех ключей. Ошибку шлюза отдаём его же словами.
+        Ответ: {"allowed": можно ли этому ключу, "agy_prompt": "on"|"off"}.
+        Ошибку шлюза отдаём его же словами.
         """
         headers = {"Authorization": "Bearer " + self.key}
-        if (admin_token or "").strip():
-            headers["X-Admin-Token"] = admin_token.strip()
         data = None
         if mode:
-            body = {"agy_prompt": mode}
-            if keys:
-                body["keys"] = keys
-            data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            data = json.dumps({"agy_prompt": mode}).encode("utf-8")
             headers["Content-Type"] = "application/json; charset=utf-8"
         req = urllib.request.Request(self.base + "/agy-prompt", data=data, headers=headers,
                                      method="POST" if mode else "GET")
@@ -2019,9 +2001,9 @@ class OpenAIBackend:
                 msg = json.loads(exc.read().decode("utf-8"))["error"]["message"]
             except Exception:
                 msg = ""
-            if exc.code == 404 and not msg.startswith("Unknown keys"):
-                msg = "шлюз не знает /agy-prompt — обновите шлюз"
-            raise RuntimeError("HTTP %d: %s" % (exc.code, msg or exc.reason))
+            err = RuntimeError("HTTP %d: %s" % (exc.code, msg or exc.reason))
+            err.status = exc.code
+            raise err
 
     def usage(self):
         req = urllib.request.Request(self.base + "/usage", headers={
@@ -2053,8 +2035,7 @@ class OpenAIBackend:
                 images = msg.get("images") or []
                 body = sent_text(msg)
                 if images:
-                    # С картинками содержимое становится списком частей —
-                    # так его принимает и наш шлюз, и обычный OpenAI.
+                    # с картинками content это список частей, формат OpenAI
                     parts = []
                     if body:
                         parts.append({"type": "text", "text": body})
@@ -2565,7 +2546,7 @@ class Api:
 
     def clear_key(self, which):
         """Стереть ключ можно только явной кнопкой в настройках."""
-        name = {"google": "googleKey", "gatewayToken": "gatewayToken"}.get(which, "apiKey")
+        name = "googleKey" if which == "google" else "apiKey"
         self.settings[name] = ""
         write_json(SETTINGS_PATH, self.settings)
         remember_secrets(self.settings)
@@ -2649,8 +2630,7 @@ class Api:
         return True
 
     def pin_chat(self, chat_id, pinned):
-        # метку держим в самом файле чата, иначе она потеряется при любом
-        # пересборе индекса; строчка в индексе — лишь отражение файла
+        # метка хранится в файле чата, индекс пересобирается из файлов
         chat = self._find(chat_id)
         if not chat:
             return {"ok": False}
@@ -3085,6 +3065,21 @@ class Api:
 
         threading.Thread(target=work, daemon=True).start()
 
+    def agy_status(self):
+        """Разрешил ли шлюз этому ключу /agy — окно по ответу показывает команду.
+
+        Спрашиваем при запуске и после сохранения настроек. Любая неудача —
+        «не разрешено»: команды, которой нельзя воспользоваться, в окне нет.
+        """
+        allowed = False
+        if self.settings.get("provider") != "google" and (self.settings.get("apiKey") or "").strip():
+            try:
+                allowed = bool(OpenAIBackend(self.settings).agy_prompt().get("allowed"))
+            except Exception as exc:
+                blog("PY   /agy-prompt не ответил: " + exc_text(exc))
+        self.agy_allowed = allowed
+        return {"allowed": allowed}
+
     def _start_agy(self, chat, rest):
         """Ответ на /agy — от шлюза, а не от модели; модель о нём не узнаёт.
 
@@ -3094,18 +3089,24 @@ class Api:
         def work():
             message = {"role": "model", "text": "", "kind": "agy", "local": True,
                        "ts": now_ms(), "model": chat.get("model") or self.settings["model"]}
-            parsed = agy_args(rest)
+            mode = agy_args(rest)
             try:
-                if isinstance(parsed, str):
-                    raise ValueError(parsed)
-                mode, keys = parsed
-                data = OpenAIBackend(self.settings).agy_prompt(
-                    mode, keys, self.settings.get("gatewayToken") or "")
-                message["text"] = agy_report(data, mode, keys)
+                if isinstance(mode, dict):
+                    raise ValueError(mode["error"])
+                data = OpenAIBackend(self.settings).agy_prompt(mode)
+                if not data.get("allowed"):
+                    raise PermissionError()
+                message["text"] = agy_report(data, mode)
             except ValueError as exc:
                 message["error"] = str(exc)
             except Exception as exc:
-                message["error"] = "Шлюз не переключил промт agy. " + exc_text(exc)
+                if isinstance(exc, PermissionError) or getattr(exc, "status", 0) == 403:
+                    # Разрешение отозвали, пока окно было открыто: прячем команду.
+                    self.agy_allowed = False
+                    self.emit({"type": "agy_allowed", "allowed": False})
+                    message["error"] = "Шлюз больше не разрешает менять промт agy для этого ключа."
+                else:
+                    message["error"] = "Шлюз не переключил промт agy. " + exc_text(exc)
             chat["messages"].append(message)
             chat["updatedAt"] = now_ms()
             self._persist_chat(chat)
@@ -3128,7 +3129,7 @@ class Api:
         if asked.get("cmd") == "agy":
             self._start_agy(chat, asked.get("target") or "")
         elif asked.get("local"):
-            # для /check «ещё раз» — это ещё одна проверка того же текста
+            # для /check повтор значит проверить тот же текст ещё раз
             self._start_check(chat, asked.get("target") or "")
         else:
             threading.Thread(target=self._generate, args=(chat_id,), daemon=True).start()
@@ -3164,8 +3165,7 @@ class Api:
                     "title": target[:48]}
 
         if name == "/check":
-            # Без текста проверяем последний ответ, а если это был /human —
-            # то сам переписанный текст, без отчёта редактора под ним.
+            # без текста берём последний ответ, у /human без служебной части
             target = rest or human_body(self._last_model_text(chat))
             if not target:
                 return {"error": "После /check нужен текст — или хотя бы один ответ в чате"}
@@ -3173,15 +3173,17 @@ class Api:
                     "title": "Проверка: " + target[:38]}
 
         if name == "/agy":
-            if (getattr(self, "settings", None) or {}).get("provider") == "google":
-                return {"error": "/agy — для шлюза agy, а сейчас подключение к Google Gemini API"}
-            parsed = agy_args(rest)
-            if isinstance(parsed, str):
-                return {"error": parsed}
+            # Без разрешения шлюза такой команды нет вовсе: «/agy ...» уходит
+            # модели обычным текстом, как любая незнакомая косая черта.
+            if not getattr(self, "agy_allowed", False):
+                return None
+            mode = agy_args(rest)
+            if isinstance(mode, dict):
+                return mode
             return {"kind": "agy", "local": True, "target": rest,
                     "title": ("/agy " + rest).strip()}
 
-        # /compact: сворачивать пустоту нечестно — получится сводка ни о чём.
+        # /compact без ответов модели не имеет смысла
         if not any(m["role"] == "model" and (m.get("text") or "").strip()
                    for m in visible_history(chat)):
             return {"error": "Сворачивать пока нечего"}
@@ -3204,9 +3206,8 @@ class Api:
         if user.get("cmd") != "compact" or user.get("compacted"):
             return
 
-        # CLI иногда иллюстрирует сводку по своей воле — просьбы не рисовать
-        # он не слушает. Ссылку выбрасываем здесь: сводка становится историей
-        # разговора, и картинке в ней делать нечего.
+        # CLI иногда добавляет к сводке картинку, хотя его просят этого
+        # не делать. Сводка становится историей, поэтому ссылку убираем.
         clean = IMAGE_LINK.sub("", answer.get("text") or "").strip()
         if clean != (answer.get("text") or ""):
             answer["text"] = clean
@@ -3391,9 +3392,8 @@ def main():
         run_tool_process()
         return
     os.makedirs(DATA_DIR, exist_ok=True)
-    # Если копия уже работает — отдаём ей управление и молча уходим. Журнал
-    # запуска при этом не трогаем: он принадлежит той копии, и затирать его
-    # значит остаться без следов, когда что-то пойдёт не так.
+    # Если копия уже запущена, показываем её окно и выходим. boot.log
+    # не трогаем, он принадлежит запущенной копии.
     if not claim_instance():
         wake_running(show="--tray" not in sys.argv[1:])
         return
@@ -3423,12 +3423,12 @@ def main():
     api._window = window
     serve_instance(api)
 
-    # Крестик прячет окно в трей: генерация продолжается, и по готовности
-    # прилетит уведомление. Полный выход — через меню значка.
+    # Крестик прячет окно в трей, генерация продолжается. Выход через меню
+    # значка.
     def on_closing():
         if api._quitting:
             return True
-        # без значка в трее прятать окно некуда — закрываемся честно
+        # без значка в трее просто закрываемся
         if not (api._tray and api._tray.icon):
             return True
         api.hide_window()

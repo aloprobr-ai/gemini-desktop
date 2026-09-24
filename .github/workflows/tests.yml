@@ -35,3 +35,6 @@ jobs:
 
       - name: /agy — выключатель промта agy на шлюзе
         run: python tests/test_agy_cmd.py
+
+      - name: Инструменты модели не достают до папки программы
+        run: python tests/test_tool_guard.py

@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-"""/agy — выключатель промта agy на шлюзе.
+"""/agy — промт agy на шлюзе, если шлюз разрешил это ключу.
+
+Разрешение даёт хозяин шлюза на сервере (agy-prompt on all | on <ключ>).
+Без него команды нет вовсе: «/agy ...» уходит модели обычным текстом.
 
 Шлюз поддельный: крошечный HTTP-сервер в этом же процессе отвечает так же,
 как /v1/agy-prompt настоящего, и запоминает, что ему прислали.
@@ -35,20 +38,9 @@ def check(name, cond, detail=''):
 
 # --------------------------------------------------------- поддельный шлюз
 
-ADMIN = 'admin-token-xyz'
+KEY = 'sk-test-desktop-1234'
 SEEN = []
-STATE = {'all': 'on', 'keys': {}}
-NAMES = ['desktop', 'Стёпа']
-
-
-def view(admin):
-    row = lambda n: {'name': n, 'agy_prompt': STATE['keys'].get(n, 'default'),
-                     'effective': STATE['keys'].get(n, STATE['all'])}
-    out = {'object': 'agy_prompt', 'interceptor': True, 'all': STATE['all'],
-           'self': row('desktop'), 'admin': admin}
-    if admin:
-        out['keys'] = [row(n) for n in NAMES]
-    return out
+STATE = {'allowed': False, 'off': False}
 
 
 class Gateway(BaseHTTPRequestHandler):
@@ -63,31 +55,22 @@ class Gateway(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def view(self):
+        return {'object': 'agy_prompt', 'allowed': STATE['allowed'],
+                'agy_prompt': 'off' if STATE['allowed'] and STATE['off'] else 'on'}
+
     def do_GET(self):
-        SEEN.append(('GET', self.path, dict(self.headers), None))
-        self.reply(200, view(self.headers.get('X-Admin-Token') == ADMIN))
+        SEEN.append(('GET', dict(self.headers), None))
+        self.reply(200, self.view())
 
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get('Content-Length') or 0))
         body = json.loads(raw.decode('utf-8'))
-        SEEN.append(('POST', self.path, dict(self.headers), body))
-        admin = self.headers.get('X-Admin-Token') == ADMIN
-        keys = body.get('keys')
-        if keys and not admin:
-            return self.reply(403, {'error': {'message': 'Changing other keys needs the admin token'}})
-        if keys == 'all':
-            STATE['all'] = body['agy_prompt']
-        else:
-            for n in (keys or ['desktop']):
-                if n.lower() not in [x.lower() for x in NAMES]:
-                    return self.reply(404, {'error': {'message': 'Unknown keys: ' + n}})
-            for n in (keys or ['desktop']):
-                name = next(x for x in NAMES if x.lower() == n.lower())
-                if body['agy_prompt'] == 'default':
-                    STATE['keys'].pop(name, None)
-                else:
-                    STATE['keys'][name] = body['agy_prompt']
-        self.reply(200, view(admin))
+        SEEN.append(('POST', dict(self.headers), body))
+        if not STATE['allowed']:
+            return self.reply(403, {'error': {'message': 'Switching the agy prompt is not allowed for this key.'}})
+        STATE['off'] = body.get('agy_prompt') == 'off'
+        self.reply(200, self.view())
 
 
 server = HTTPServer(('127.0.0.1', 0), Gateway)
@@ -95,11 +78,10 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 BASE = 'http://127.0.0.1:%d/v1' % server.server_port
 
 
-def make_api(chat, token=''):
+def make_api(chat):
     api = app.Api.__new__(app.Api)
     api.settings = dict(app.DEFAULT_SETTINGS)
-    api.settings.update({'apiKey': 'sk-test-desktop', 'baseUrl': BASE, 'proxy': '',
-                         'provider': 'openai', 'gatewayToken': token})
+    api.settings.update({'apiKey': KEY, 'baseUrl': BASE, 'proxy': '', 'provider': 'openai'})
     api.events = []
     api.emit = lambda ev: api.events.append(ev)
     api._persist_chat = lambda c: None
@@ -121,7 +103,7 @@ def wait(cond, sec=5.0):
 
 
 def run(api, chat, text):
-    """Отправить /agy и дождаться ответа в чате."""
+    """Отправить /agy и дождаться ответа шлюза в чате."""
     before = len(chat['messages'])
     res = api.send(chat['id'], text)
     if res != {'ok': True}:
@@ -130,84 +112,73 @@ def run(api, chat, text):
     return res, chat['messages'][-1]
 
 
+app.remember_secrets({'apiKey': KEY})
+
 # ------------------------------------------------------------- разбор
 
 print('разбор /agy')
-check('без слов — узнать', app.agy_args('') == (None, None))
-check('off — свой ключ', app.agy_args('off') == ('off', None))
-check('русские слова', app.agy_args('выкл') == ('off', None) and app.agy_args('вкл') == ('on', None))
-check('all', app.agy_args('off all') == ('off', 'all'))
-check('«все» — то же, что all', app.agy_args('on все') == ('on', 'all'))
-check('имена через пробел и запятую',
-      app.agy_args('off Стёпа, desktop') == ('off', ['Стёпа', 'desktop']))
-check('default для ключа', app.agy_args('default Стёпа') == ('default', ['Стёпа']))
-check('default для всех — ошибка', isinstance(app.agy_args('default all'), str))
-check('all вперемешку с именами — ошибка', isinstance(app.agy_args('off all desktop'), str))
+check('без слов — узнать', app.agy_args('') is None)
+check('off и on', app.agy_args('off') == 'off' and app.agy_args('on') == 'on')
+check('русские слова', app.agy_args('выкл') == 'off' and app.agy_args('вкл') == 'on')
+check('чужих ключей и all нет', isinstance(app.agy_args('off all'), dict)
+      and isinstance(app.agy_args('off stepa'), dict))
 check('непонятное слово — ошибка с подсказкой',
-      isinstance(app.agy_args('потом'), str) and '/agy off all' in app.agy_args('потом'))
-check('в списке команд есть', '/agy' in app.COMMANDS)
+      isinstance(app.agy_args('потом'), dict) and '/agy off' in app.agy_args('потом')['error'])
 
-print('\nкоманда в чате')
+print('\nбез разрешения шлюза команды нет')
 chat = {'id': 'a1', 'title': 'Новый чат', 'messages': [
     {'role': 'user', 'text': 'привет', 'ts': 1}, {'role': 'model', 'text': 'Привет!', 'ts': 2}]}
 api = make_api(chat)
-cmd = api._expand_command(chat, '/agy off')
-check('узнана и местная', cmd.get('kind') == 'agy' and cmd.get('local') is True, cmd)
-check('ошибка разбора — сразу, без сети',
-      'error' in api._expand_command(chat, '/agy потом'))
-g = make_api(chat)
-g.settings['provider'] = 'google'
-check('с Google API — внятный отказ', 'error' in g._expand_command(chat, '/agy'))
+check('шлюз: не разрешено', api.agy_status() == {'allowed': False})
+check('/agy — не команда', api._expand_command(chat, '/agy off') is None)
+res = api.send('a1', '/agy off')
+check('уходит модели обычным текстом', res == {'ok': True} and api.generated == ['a1'], api.generated)
+check('POST на шлюз не уходил', all(s[0] == 'GET' for s in SEEN), SEEN)
+chat['messages'] = chat['messages'][:2]
+
+print('\nс разрешением')
+STATE['allowed'] = True
+api = make_api(chat)
+check('шлюз: разрешено', api.agy_status() == {'allowed': True})
+check('узнана и местная', (api._expand_command(chat, '/agy off') or {}).get('local') is True)
+check('лишние слова — ошибка сразу', 'error' in api._expand_command(chat, '/agy off all'))
 
 res, msg = run(api, chat, '/agy')
-check('узнать: отправка принята', res == {'ok': True}, res)
-check('узнать: GET без токена', SEEN and SEEN[-1][0] == 'GET'
-      and 'X-Admin-Token' not in SEEN[-1][2], SEEN[-1:])
+check('узнать: GET', res == {'ok': True} and SEEN[-1][0] == 'GET', res)
 check('узнать: ответ местный', msg and msg.get('local') and msg.get('kind') == 'agy', msg)
 check('узнать: в ответе состояние', msg and 'идёт как есть' in msg['text'], msg)
 check('модель не звали', api.generated == [], api.generated)
-check('окно получило done', any(e['type'] == 'done' for e in api.events))
+
+res, msg = run(api, chat, '/agy выкл')
+check('off: ушёл POST только со своим значением', SEEN[-1][0] == 'POST'
+      and SEEN[-1][2] == {'agy_prompt': 'off'}, SEEN[-1][2])
+check('off: ключ в заголовке, ничего лишнего', SEEN[-1][1].get('Authorization') == 'Bearer ' + KEY
+      and 'X-Admin-Token' not in SEEN[-1][1])
+check('off: ответ', msg and 'Готово' in msg['text'] and 'вырезается' in msg['text'], msg)
+
+res, msg = run(api, chat, '/agy on')
+check('on: промт вернулся', STATE['off'] is False and 'идёт как есть' in (msg or {}).get('text', ''), msg)
 check('модель /agy не видит', all(not m.get('local') for m in app.visible_history(chat)))
 
-res, msg = run(api, chat, '/agy off')
-check('свой ключ off: ушёл POST без keys',
-      SEEN[-1][0] == 'POST' and SEEN[-1][3] == {'agy_prompt': 'off'}, SEEN[-1][3])
-check('свой ключ off: ответ', msg and 'Готово' in msg['text'] and 'вырезается' in msg['text'], msg)
-check('ключ ушёл в заголовке', SEEN[-1][2].get('Authorization') == 'Bearer sk-test-desktop')
-
-res, msg = run(api, chat, '/agy off all')
-check('all без токена — ошибка шлюза в окне',
-      msg and msg.get('error') and '403' in msg['error'], msg)
-check('в ошибке нет ключа', msg and 'sk-test-desktop' not in (msg.get('error') or ''))
-
-print('\nс токеном управления')
-app.remember_secrets({'apiKey': 'sk-test-desktop', 'gatewayToken': ADMIN})
-api = make_api(chat, ADMIN)
-res, msg = run(api, chat, '/agy off all')
-check('all off принят', msg and not msg.get('error') and 'всех ключей' in msg['text'], msg)
-check('токен ушёл в X-Admin-Token', SEEN[-1][2].get('X-Admin-Token') == ADMIN)
-check('состояние шлюза: all off', STATE['all'] == 'off', STATE)
-check('таблица ключей в ответе', msg and '| Стёпа |' in msg['text'], msg and msg['text'])
-
-res, msg = run(api, chat, '/agy on стёпа')
-check('по имени, без учёта регистра', STATE['keys'].get('Стёпа') == 'on', STATE)
-check('токена нет в тексте ответа', msg and ADMIN not in msg['text'])
-
-res, msg = run(api, chat, '/agy on вася')
-check('неизвестный ключ — ошибка шлюза', msg and 'Unknown keys' in (msg.get('error') or ''), msg)
-
-res, msg = run(api, chat, '/agy default Стёпа')
-check('default снимает своё значение', 'Стёпа' not in STATE['keys'], STATE)
-
-print('\nповтор и секреты')
 before = len(SEEN)
-res = api.regenerate('a1')
-check('повтор принят', res == {'ok': True}, res)
 check('повтор — снова запрос к шлюзу, не генерация',
-      wait(lambda: len(SEEN) > before) and api.generated == [], api.generated)
-pub = app.public_settings(api.settings)
-check('токен наружу не отдаётся', pub.get('gatewayToken') == '' and pub.get('gatewayTokenSet') is True)
-check('токен вычищается из текста', ADMIN not in app.scrub('ошибка ' + ADMIN))
+      api.regenerate('a1') == {'ok': True} and wait(lambda: len(SEEN) > before) and api.generated == [])
+
+print('\nразрешение отозвали, пока окно открыто')
+STATE['allowed'] = False
+res, msg = run(api, chat, '/agy off')
+check('ошибка понятная', msg and 'больше не разрешает' in (msg.get('error') or ''), msg)
+check('окно прячет команду', {'type': 'agy_allowed', 'allowed': False} in api.events, api.events[-3:])
+check('дальше /agy — снова не команда', api._expand_command(chat, '/agy off') is None)
+check('в ошибке нет ключа', msg and KEY not in (msg.get('error') or ''))
+
+print('\nбез шлюза')
+g = make_api(chat)
+g.settings['provider'] = 'google'
+check('Google API — не разрешено и не спрашиваем', g.agy_status() == {'allowed': False})
+d = make_api(chat)
+d.settings['baseUrl'] = 'http://127.0.0.1:9/v1'
+check('шлюз не отвечает — не разрешено', d.agy_status() == {'allowed': False})
 
 server.shutdown()
 print('\nИтого: %d OK, %d FAIL' % (ok, len(bad)))

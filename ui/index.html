@@ -189,14 +189,6 @@
           <em class="hint" id="keyHint"></em>
           <em class="hint" id="testResult"></em>
         </label>
-        <label class="field" id="fieldGatewayToken">
-          <span>Токен управления шлюзом</span>
-          <div class="with-btn">
-            <input id="setGatewayToken" type="password" spellcheck="false" autocomplete="off">
-            <button class="mini-btn" id="btnClearGatewayToken">Удалить</button>
-          </div>
-          <em class="hint" id="gatewayTokenHint"></em>
-        </label>
       </section>
 
       <!-- два промта рядом: слева глобальный, справа инструменты -->
@@ -243,10 +235,9 @@
             <input id="setDetectModel" type="text" spellcheck="false">
           </label>
         </div>
-        <em class="hint">Считается дважды: признаки — на этом компьютере, без сети,
-          а мнение спрашивается у модели. Один заход показывает одно настроение,
-          несколько — ещё и разброс: по нему видно, верить ли числу. Совпадать
-          два счёта не обязаны, и расхождение как раз полезно.</em>
+        <em class="hint">Две оценки: по признакам текста (считается на компьютере)
+          и по мнению модели. Если спрашивать модель несколько раз, видно разброс
+          её оценок.</em>
       </section>
 
       <section class="block">
@@ -258,7 +249,7 @@
             <button class="mini-btn" id="btnPickDir">Выбрать</button>
             <button class="mini-btn" id="btnResetDir">Загрузки</button>
           </div>
-          <em class="hint">Сюда попадают файлы, если модель не указала папку явно.</em>
+          <em class="hint">Сюда сохраняются файлы, если модель не указала папку.</em>
         </label>
       </section>
 
@@ -288,9 +279,8 @@
       <section class="block">
         <div class="block-title">Выгрузка</div>
         <div class="row-between">
-          <em class="hint">Все чаты — в Markdown, по файлу на чат, в новую папку.
-            Один чат сохраняется кнопкой в его строке слева. Картинки в файл
-            не попадают, развёрнутые промты команд — тоже: только то, что видно в окне.</em>
+          <em class="hint">Каждый чат сохраняется в отдельный файл Markdown в новой
+            папке, без картинок. Один чат можно выгрузить кнопкой в списке чатов.</em>
           <button class="mini-btn" id="btnExportAll">Выгрузить все чаты</button>
         </div>
       </section>
@@ -306,10 +296,8 @@
       <section class="block">
         <div class="block-title">Обратная связь</div>
         <div class="row-between">
-          <em class="hint">Что-то сломалось или ведёт себя странно — расскажите.
-            Отчёт увидит только автор программы: кнопка открывает разговор с ним
-            в Telegram, а сам отчёт кладётся в буфер обмена — останется вставить
-            его в чат. Никакой задачи в репозитории, никакого сервера-посредника.</em>
+          <em class="hint">Отчёт копируется в буфер обмена, а кнопка открывает чат
+            с автором в Telegram.</em>
           <button class="mini-btn" id="btnReportSettings">Сообщить о баге</button>
         </div>
       </section>
@@ -317,10 +305,7 @@
       <section class="block">
         <div class="block-title">Кто помог проекту</div>
         <div class="row-between">
-          <em class="hint">Программу писал не только я. Люди присылали отчёты,
-            ловили ошибки, спорили о формулировках и проверяли сборки на своих
-            машинах. Все они перечислены в Helpers.md — файл лежит в корне
-            репозитория и открыт всем.</em>
+          <em class="hint">Список людей, которые помогали с программой.</em>
           <button class="mini-btn" id="btnHelpers">Открыть Helpers.md</button>
         </div>
       </section>
@@ -380,9 +365,8 @@
         <input type="checkbox" id="repAnswer">
         <span>Ответ модели, на котором всё пошло не так</span>
       </label>
-      <em class="hint">Ключи не приложатся ни при каком раскладе: всё, что уходит
-        наружу, сначала чистится. Переписка не прикладывается тоже — кроме
-        одного ответа, и только если отметить это выше.</em>
+      <em class="hint">API-ключи в отчёт не попадают. Переписка тоже, кроме ответа
+        модели, если он отмечен выше.</em>
 
       <div class="block-title">Подпись в Helpers.md</div>
       <label class="check">
@@ -399,9 +383,8 @@
           <input id="repLink" type="text" spellcheck="false" placeholder="https://github.com/ник">
         </label>
       </div>
-      <em class="hint">Helpers.md открыт всем: строка с вашим именем и ссылкой
-        будет видна каждому, кто зайдёт в репозиторий. Без галочки об этом
-        в отчёте не будет ни слова. Передумаете — напишите, уберу.</em>
+      <em class="hint">Helpers.md виден всем, кто открывает репозиторий. Чтобы
+        убрать подпись, напишите автору.</em>
 
       <div class="row-between">
         <em class="hint" id="repHint"></em>
@@ -448,11 +431,11 @@
           <path fill="url(#wizGrad)" d="M12 1.6c.7 5.4 4.4 9.1 9.8 9.8c.4.1.4.7 0 .8c-5.4.7-9.1 4.4-9.8 9.8c-.1.4-.7.4-.8 0c-.7-5.4-4.4-9.1-9.8-9.8c-.4-.1-.4-.7 0-.8c5.4-.7 9.1-4.4 9.8-9.8c.1-.4.7-.4.8 0z"/>
         </svg>
         <h1>Gemini на вашем компьютере</h1>
-        <p class="wiz-sub">Обычный чат, но живёт рядом с файлами и умеет с ними работать.</p>
+        <p class="wiz-sub">Чат с Gemini, который умеет работать с файлами на компьютере.</p>
         <ul class="wiz-list">
           <li>
             <b>Чаты и модели</b>
-            <span>Семь моделей и отдельный выбор глубины размышлений. У каждого чата своя.</span>
+            <span>Выбор модели и уровня размышлений, отдельно для каждого чата.</span>
           </li>
           <li>
             <b>Работа с файлами</b>
@@ -460,18 +443,18 @@
           </li>
           <li>
             <b>Свои инструменты</b>
-            <span>Если готовых не хватает, модель пишет новый — а запускается он только с вашего разрешения.</span>
+            <span>Модель может написать новый инструмент. Запускается он только после вашего разрешения.</span>
           </li>
           <li>
             <b>Два промта</b>
-            <span>Общие правила ответа и отдельно описание инструментов — оба можно переписать.</span>
+            <span>Общий промт и промт инструментов, оба можно изменить.</span>
           </li>
         </ul>
       </section>
 
       <section class="wiz-page" data-page="2">
         <h1>Начало</h1>
-        <p class="wiz-sub">Приложение ходит к модели через шлюз. Укажите адрес и ключ — и можно работать.</p>
+        <p class="wiz-sub">Укажите адрес шлюза и API-ключ.</p>
 
         <label class="wiz-field">
           <span>Провайдер</span>
@@ -484,13 +467,13 @@
         <label class="wiz-field" id="wizBaseWrap">
           <span>Адрес шлюза</span>
           <input id="wizBase" type="text" spellcheck="false" placeholder="http://127.0.0.1:8080/v1">
-          <em class="wiz-hint">Подставлен шлюз на этом компьютере. Если ваш живёт по другому адресу — замените.</em>
+          <em class="wiz-hint">По умолчанию — шлюз на этом компьютере.</em>
         </label>
 
         <label class="wiz-field">
           <span>API-ключ</span>
           <input id="wizKey" type="password" spellcheck="false" autocomplete="off" placeholder="sk-...">
-          <em class="wiz-hint" id="wizKeyHint">Хранится только на этом компьютере и нигде не показывается. Свой шлюз может ключа и не спрашивать — тогда оставьте поле пустым.</em>
+          <em class="wiz-hint" id="wizKeyHint">Ключ хранится только на этом компьютере. Если шлюз работает без ключа, оставьте поле пустым.</em>
         </label>
       </section>
 
@@ -500,8 +483,8 @@
         </div>
         <h1>Всё готово</h1>
         <p class="wiz-sub" id="wizReady">Шлюз ответил, ключ принят.</p>
-        <p class="wiz-note">Нажмите «Начать» — откроется первый чат, и Gemini сам расскажет,
-          что умеет в этом приложении.</p>
+        <p class="wiz-note">Нажмите «Начать»: откроется первый чат, и Gemini расскажет,
+          что умеет.</p>
       </section>
 
     </div>
